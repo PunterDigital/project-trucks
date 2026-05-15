@@ -20,7 +20,11 @@ pub fn run() {
             app.manage(db::AppState { pool });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![commands::db::db_ping])
+        .invoke_handler(tauri::generate_handler![
+            commands::db::db_ping,
+            commands::sessions::create_session,
+            commands::jobs::create_job,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
