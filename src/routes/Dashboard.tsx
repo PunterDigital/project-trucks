@@ -1,10 +1,38 @@
+import { useEffect, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+
+type DbPing = { ok: boolean; message: string };
+
 export function Dashboard() {
+  const [ping, setPing] = useState<DbPing | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    invoke<DbPing>("db_ping")
+      .then(setPing)
+      .catch((e: unknown) => setError(String(e)));
+  }, []);
+
+  const status = error
+    ? `error: ${error}`
+    : ping
+      ? ping.message
+      : "checking...";
+  const tone = error
+    ? "text-destructive"
+    : ping?.ok
+      ? "text-emerald-600 dark:text-emerald-400"
+      : "text-muted-foreground";
+
   return (
-    <div className="space-y-2">
-      <h2 className="text-2xl font-semibold tracking-tight">Dashboard</h2>
-      <p className="text-muted-foreground">
-        Lifetime stats, recent jobs, and trend charts will live here.
-      </p>
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <h2 className="text-2xl font-semibold tracking-tight">Dashboard</h2>
+        <p className="text-muted-foreground">
+          Lifetime stats, recent jobs, and trend charts will live here.
+        </p>
+      </div>
+      <p className={`text-sm font-mono ${tone}`}>db_ping: {status}</p>
     </div>
   );
 }
