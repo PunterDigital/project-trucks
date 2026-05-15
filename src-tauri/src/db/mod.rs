@@ -5,6 +5,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use tauri::{AppHandle, Manager};
 
 pub mod models;
+pub mod rollups;
 
 pub struct AppState {
     pub pool: SqlitePool,
