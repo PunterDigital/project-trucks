@@ -1,0 +1,22 @@
+# Node / frontend
+node_modules/
+dist/
+
+# Rust / Tauri
+target/
+src-tauri/target/
+
+# Local env
+.env
+.env.*
+!.env.example
+
+# SQLite databases (local data, never commit)
+*.db
+*.db-journal
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
