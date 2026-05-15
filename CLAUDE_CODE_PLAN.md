@@ -37,7 +37,7 @@ ProjectTrucks/
 ├── PLAN.md                      # architectural plan
 ├── CLAUDE_CODE_PLAN.md          # this file
 ├── README.md                    # written in M4
-├── LICENSE                      # MIT, added in M0
+├── LICENSE                      # GPL-3, added in M0
 ├── .gitignore
 ├── package.json                 # frontend deps
 ├── pnpm-lock.yaml
