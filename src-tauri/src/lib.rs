@@ -30,6 +30,8 @@ pub fn run() {
             commands::jobs::get_job,
             commands::jobs::update_job,
             commands::jobs::delete_job,
+            commands::trucks::list_trucks,
+            commands::trucks::get_truck,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -16,6 +16,7 @@ import type {
   NewSession,
   SessionFilter,
   SessionsPage,
+  Truck,
 } from "@/types";
 
 export const api = {
@@ -43,4 +44,9 @@ export const api = {
     invoke<Job | null>("update_job", { id, patch }),
 
   deleteJob: (id: string) => invoke<void>("delete_job", { id }),
+
+  // -- Trucks ----
+  listTrucks: () => invoke<Truck[]>("list_trucks"),
+
+  getTruck: (id: string) => invoke<Truck | null>("get_truck", { id }),
 };

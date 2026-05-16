@@ -7,6 +7,7 @@ import { Jobs } from "@/routes/Jobs";
 import { JobNew } from "@/routes/JobNew";
 import { JobDetail } from "@/routes/JobDetail";
 import { Trucks } from "@/routes/Trucks";
+import { TruckDetail } from "@/routes/TruckDetail";
 import { Settings } from "@/routes/Settings";
 
 function App() {
@@ -23,6 +24,7 @@ function App() {
             <Route path="/jobs/new" element={<JobNew />} />
             <Route path="/jobs/:id" element={<JobDetail />} />
             <Route path="/trucks" element={<Trucks />} />
+            <Route path="/trucks/:id" element={<TruckDetail />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
         </main>
