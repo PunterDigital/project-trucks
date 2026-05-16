@@ -12,7 +12,7 @@ Read this file alongside `PLAN.md` (the architectural plan). If the two ever con
 
 * Brand: ProjectTrucks
 * Game: ETS2 only (no ATS, no other sims)
-* Licence: GPL-3, open source. Forced by our use of Funbit's GPL-3 telemetry plugin DLL.
+* Licence: MIT, open source. (The plan originally assumed the plugin was GPL-3 and forced us along; on closer inspection it's built from MIT-licensed `Funbit/ets2-sdk-plugin`, so we chose MIT for ourselves.)
 * Updates: ship manually, no auto-update infra
 * Multi-user / hosted version: not in scope, don't preserve the upgrade path
 
@@ -37,7 +37,7 @@ ProjectTrucks/
 ├── PLAN.md                      # architectural plan
 ├── CLAUDE_CODE_PLAN.md          # this file
 ├── README.md                    # written in M4
-├── LICENSE                      # GPL-3, added in M0
+├── LICENSE                      # MIT, added in M0
 ├── .gitignore
 ├── package.json                 # frontend deps
 ├── pnpm-lock.yaml
@@ -109,19 +109,19 @@ ProjectTrucks/
 
 ### Task 0.1 — Initialise the repo
 
-**Goal:** Git repo with GPL-3 licence and `.gitignore`.
+**Goal:** Git repo with MIT licence and `.gitignore`.
 
-**Files:** `LICENSE` (full GPL-3 text from https://www.gnu.org/licenses/gpl-3.0.txt), `.gitignore`, `README.md` (one-paragraph placeholder).
+**Files:** `LICENSE` (MIT text with `Copyright (c) 2026 Shay Punter`), `.gitignore`, `README.md` (one-paragraph placeholder).
 
 **Steps:**
 
 1. `git init`
-2. Add the GPL-3 licence text. Add a copyright header (`Copyright (C) 2026 Shay Punter`).
+2. Add the MIT licence text with the copyright line.
 3. `.gitignore` should cover: `node_modules/`, `dist/`, `target/`, `src-tauri/target/`, `.env*` (except `.env.example`), `*.db`, `*.db-journal`.
-4. Stage README placeholder: "ProjectTrucks — a local ETS2 delivery tracker. WIP. Licensed under GPL-3."
+4. Stage README placeholder: "ProjectTrucks — a local ETS2 delivery tracker. WIP. Licensed under MIT."
 5. `git commit -m "chore: init repo"`
 
-**Acceptance:** Clean repo, one commit, GPL-3 licence present.
+**Acceptance:** Clean repo, one commit, MIT licence present. (Historical note: the very first commit shipped GPL-3 because the plan miscoded the plugin's licence; that was rewritten to MIT during Task 2.0.)
 
 ### Task 0.2 — Bootstrap the Tauri 2 + Vite + React + TS template
 
@@ -340,14 +340,14 @@ This is the hardest milestone. Start with Task 2.0 (licensing/plugin sourcing) b
 
 **Goal:** Funbit's `ets2-telemetry.dll` lives in the repo, ready to be shipped inside our installer. The MMF layout is documented for the Rust struct to mirror in Task 2.1.
 
-**Background:** Funbit's plugin is GPL-3, which is fine — ProjectTrucks is GPL-3 too. We're not modifying the plugin; we just bundle it and read its MMF output.
+**Background:** The DLL we bundle ships inside the GPL-3 `Funbit/ets2-telemetry-server` release, but it's *built from* the MIT-licensed `Funbit/ets2-sdk-plugin` repo. The GPL-3 covers the C# web server we don't use; the plugin binary itself is MIT. So bundling the DLL doesn't infect us with copyleft — we just need to keep the MIT copyright and permission notice with our distribution. ProjectTrucks itself is MIT (see Task 0.1 commentary).
 
 **Steps:**
 
 1. Go to https://github.com/Funbit/ets2-telemetry-server/releases and download the latest stable release archive.
 2. Extract `Ets2Telemetry/Plugins/scs-telemetry-input.dll` (or the equivalent path in the current release — the plugin filename has varied) and also the 32-bit and 64-bit plugin DLLs if the release ships both. ETS2's modern builds use win_x64 only, but verify.
 3. Commit the DLL(s) into `assets/telemetry-plugin/` in this repo.
-4. Write `assets/telemetry-plugin/README.md` documenting: source release tag, download URL, SHA256 of each DLL, and the line "Licensed under GPL-3; see upstream repository for source."
+4. Write `assets/telemetry-plugin/README.md` documenting: source release tag, download URL, SHA256 of each DLL, and the MIT licence + copyright notice from `Funbit/ets2-sdk-plugin`.
 5. Add the upstream link and licence note to ProjectTrucks' main README.
 6. Identify the C++ struct that Funbit's plugin writes to its MMF. Look in their repo under `scs-telemetry-input/inc/sharedmemory.hpp` (path may vary by release). Save a copy of that header as a reference inside `assets/telemetry-plugin/sharedmemory.hpp` — we'll mirror its layout in Rust in Task 2.1.
 7. Identify the MMF name (Funbit historically uses `Local\\SimTelemetry`). Record it in the README.
@@ -355,11 +355,11 @@ This is the hardest milestone. Start with Task 2.0 (licensing/plugin sourcing) b
 **Acceptance:**
 
 * `assets/telemetry-plugin/scs-telemetry-input.dll` (or equivalent) is in the repo.
-* `assets/telemetry-plugin/README.md` documents version, SHA256, source URL, GPL-3 notice.
+* `assets/telemetry-plugin/README.md` documents version, SHA256, source URL, and the upstream MIT copyright + permission notice.
 * `assets/telemetry-plugin/sharedmemory.hpp` (or equivalent) is committed for reference.
 * MMF name is recorded.
 
-**Note on bundling GPL-3 binaries:** GPL-3 obliges us to provide source for the bundled DLL (or a written offer thereof). The README's link to Funbit's repo satisfies §6 of GPL-3 ("a written offer ... to give anyone who possesses the object code ... a copy of the corresponding Source"). Verify the upstream repo is still accessible at release time and snapshot the source archive if it ever isn't.
+**Note on bundling MIT binaries:** MIT just requires us to include the copyright notice and permission notice with the distribution. We do that in `assets/telemetry-plugin/README.md` and also snapshot the upstream source archive into the repo so the provenance trail survives even if the upstream repo ever goes away.
 
 ### Task 2.1 — Define the shared-memory struct in Rust
 

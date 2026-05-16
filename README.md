@@ -10,8 +10,10 @@ update. Auto-capture from ETS2 telemetry lands in M2. The architectural plan is
 in [PLAN.md](PLAN.md); the milestone-by-milestone implementation plan is in
 [CLAUDE_CODE_PLAN.md](CLAUDE_CODE_PLAN.md).
 
-Licensed under **GPL-3** (see [LICENSE](LICENSE)). Required by our use of
-Funbit's GPL-3 telemetry plugin — we'll bundle that DLL in M2.
+Licensed under **MIT** (see [LICENSE](LICENSE)). The plugin DLL we bundle in
+M2 is also MIT (built from
+[Funbit/ets2-sdk-plugin](https://github.com/Funbit/ets2-sdk-plugin)) —
+provenance is in [assets/telemetry-plugin/README.md](assets/telemetry-plugin/README.md).
 
 > _Screenshot placeholder — add a shot of the Jobs page once you've got a few
 > rows logged. Drop it in `docs/screenshots/jobs.png` and reference it here._
@@ -109,5 +111,5 @@ cd src-tauri && cargo clippy        # Rust lints (CI runs with -D warnings)
 
 ## Contributing
 
-This is a personal project, but the code is GPL-3 — feel free to fork. There's
+This is a personal project, but the code is MIT — feel free to fork. There's
 no contribution process yet.

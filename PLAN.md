@@ -14,7 +14,7 @@ This is a personal tracker first. The data model is shaped so we *could* grow it
 
 - *ProjectFly* — the flight-sim equivalent: client app + logbook + passport (country stamps) + achievements.
 - *TrucksBook* — the dominant ETS2 platform we're loosely cloning. Worth studying for feature ideas later.
-- *Funbit's ets2-telemetry-server* (GPL-3) — **we use this directly**. Funbit's C++ plugin DLL goes into the game's plugins folder and writes telemetry to a memory-mapped file; our Rust backend reads from that file. Bundling Funbit's plugin pulls ProjectTrucks under GPL-3, which is the project's licence (see §8).
+- *Funbit's ets2-telemetry-server* (GPL-3) and the underlying *Funbit/ets2-sdk-plugin* (MIT) — **we use the plugin DLL directly**. Funbit's C++ plugin DLL goes into the game's plugins folder and writes telemetry to a memory-mapped file; our Rust backend reads from that file. The plugin is MIT-licensed (the GPL-3 covers the C# server, which we don't use), so ProjectTrucks itself is free to pick its own licence — we've chosen MIT (see §8).
 
 ---
 
@@ -53,7 +53,7 @@ Explicitly **out of scope** for v1 (deferred until/unless we go multi-user):
 | Database | **SQLite via `tauri-plugin-sql`** | Single file, embedded, no server. Trivial to back up (copy one file). |
 | Schema/migrations | **Embedded SQL migrations** (or Drizzle for type-safety on the JS side) | Stable, simple, file-versioned. |
 | Telemetry reader | **Rust + `memmap2` crate** | Reads the SCS plugin's shared-memory struct natively. No GPL infection, no C# dependency. |
-| Telemetry plugin | **Funbit's `ets2-telemetry.dll`** (GPL-3) | Battle-tested community plugin. We bundle it and our installer copies it into the game's `bin/win_x64/plugins/` folder. |
+| Telemetry plugin | **Funbit's `ets2-telemetry-server.dll`** (MIT, built from `Funbit/ets2-sdk-plugin`) | Battle-tested community plugin. We bundle it and our installer copies it into the game's `bin/win_x64/plugins/` folder. |
 | Build/dist | **Tauri bundler → MSI or NSIS** | Single Windows installer. Optional code signing later. |
 
 **Why not Electron?** Same UX, ~10× the binary size, and we'd still need a separate native helper (or Node native module) to read the memory-mapped file. Tauri is the better tool for a Rust-heavy native integration.
@@ -274,7 +274,7 @@ Approximate timeline assumes part-time evenings/weekends.
 
 1. **Brand name:** ProjectTrucks.
 2. **Games supported:** ETS2 only. ATS is explicitly out.
-3. **Licence:** GPL-3, open source from day one. Forced by our use of Funbit's GPL-3 plugin DLL — and that's fine.
+3. **Licence:** MIT, open source from day one. (The plan originally assumed Funbit's plugin was GPL-3 and that pulled us along; on closer inspection the plugin DLL is built from MIT-licensed `Funbit/ets2-sdk-plugin`, so we picked MIT for ourselves.)
 4. **Updates:** ship manually. No auto-update infra in MVP.
 5. **Multi-user upgrade path:** not preserved. Build for single-user-local and don't over-engineer for a hypothetical hosted version.
 
