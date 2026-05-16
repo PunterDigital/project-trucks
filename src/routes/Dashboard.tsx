@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-
-type DbPing = { ok: boolean; message: string };
+import { api } from "@/lib/api";
+import type { DbPing } from "@/types";
 
 export function Dashboard() {
   const [ping, setPing] = useState<DbPing | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    invoke<DbPing>("db_ping")
+    api
+      .dbPing()
       .then(setPing)
       .catch((e: unknown) => setError(String(e)));
   }, []);
