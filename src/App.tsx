@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { Dashboard } from "@/routes/Dashboard";
 import { Jobs } from "@/routes/Jobs";
 import { JobNew } from "@/routes/JobNew";
+import { JobDetail } from "@/routes/JobDetail";
 import { Trucks } from "@/routes/Trucks";
 import { Settings } from "@/routes/Settings";
 
@@ -20,6 +21,7 @@ function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/jobs" element={<Jobs />} />
             <Route path="/jobs/new" element={<JobNew />} />
+            <Route path="/jobs/:id" element={<JobDetail />} />
             <Route path="/trucks" element={<Trucks />} />
             <Route path="/settings" element={<Settings />} />
           </Routes>
