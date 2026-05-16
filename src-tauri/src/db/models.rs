@@ -127,6 +127,60 @@ pub struct NewSession {
     pub status: SessionStatus,
 }
 
+/// Filter for `list_sessions`. All fields optional.
+///
+/// `limit` defaults to 25 and is capped at 200 server-side.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionFilter {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    pub kind: Option<SessionKind>,
+    /// `ended_at >= from` (inclusive).
+    pub from: Option<DateTime<Utc>>,
+    /// `ended_at < to` (exclusive).
+    pub to: Option<DateTime<Utc>>,
+}
+
+/// Filter for `list_jobs`. All fields optional.
+///
+/// `search` matches case-insensitively against source/dest city and company,
+/// and against cargo name. `from`/`to` bound `completed_at`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobFilter {
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    pub status: Option<JobStatus>,
+    pub search: Option<String>,
+    pub from: Option<DateTime<Utc>>,
+    pub to: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionsPage {
+    pub items: Vec<DrivingSession>,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobsPage {
+    pub items: Vec<Job>,
+    pub total: i64,
+}
+
+/// Mutable subset of a Job. Each `Some(x)` overwrites; `None` leaves the
+/// column alone. To clear `notes` or `flag_reason`, send `Some("")`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobPatch {
+    pub notes: Option<String>,
+    pub flagged: Option<bool>,
+    pub flag_reason: Option<String>,
+}
+
 /// Input shape for inserting a new job. `id` and `avg_speed_kmh` are computed
 /// server-side; `session_id` is set by the telemetry pipeline and left `None`
 /// by the manual-entry form.

@@ -23,7 +23,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::db::db_ping,
             commands::sessions::create_session,
+            commands::sessions::list_sessions,
+            commands::sessions::delete_session,
             commands::jobs::create_job,
+            commands::jobs::list_jobs,
+            commands::jobs::get_job,
+            commands::jobs::update_job,
+            commands::jobs::delete_job,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
