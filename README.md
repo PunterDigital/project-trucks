@@ -4,13 +4,35 @@ A local Euro Truck Simulator 2 delivery tracker. Runs on your own machine, reads
 telemetry while you play, and writes every kilometre and every job to a local
 SQLite database. No accounts, no cloud, no telemetry-back-to-us.
 
-Status: **work in progress**. The architectural plan is in [PLAN.md](PLAN.md);
-the milestone-by-milestone implementation plan is in
-[CLAUDE_CODE_PLAN.md](CLAUDE_CODE_PLAN.md). M0 is complete — the app boots, the
-sidebar nav works, and a local SQLite database is created on first launch.
+**Status:** **M1 complete.** You can log jobs by hand, search and filter the
+history, edit notes, flag rows, delete jobs, and watch the per-truck rollups
+update. Auto-capture from ETS2 telemetry lands in M2. The architectural plan is
+in [PLAN.md](PLAN.md); the milestone-by-milestone implementation plan is in
+[CLAUDE_CODE_PLAN.md](CLAUDE_CODE_PLAN.md).
 
 Licensed under **GPL-3** (see [LICENSE](LICENSE)). Required by our use of
 Funbit's GPL-3 telemetry plugin — we'll bundle that DLL in M2.
+
+> _Screenshot placeholder — add a shot of the Jobs page once you've got a few
+> rows logged. Drop it in `docs/screenshots/jobs.png` and reference it here._
+
+## What you can do today (M1)
+
+- **Log a job by hand** at `/jobs/new`. Every column the auto-capture path will
+  eventually fill is editable (route, cargo, distance, duration, truck, status,
+  fuel, damage, notes). Full client-side validation via Zod.
+- **Browse the history** at `/jobs`. Search across city/company/cargo, filter
+  by status, narrow by completed-at date range, paginate at 25 rows per page.
+- **Open any job** at `/jobs/:id` for the full record. Notes / flagged / flag
+  reason are debounced-saved (800 ms). Delete with a confirm dialog.
+- **See your fleet** at `/trucks` — list of every truck driven, sorted by
+  total distance, with the delivery / free-roam split shown underneath. Click
+  through to a placeholder detail page (real one lands in Task 3.2).
+- **Trust the rollups.** `recompute_truck` runs inside every write path; the
+  `trucks` table is purely derived state. There's a regression-guard
+  integration test (`tests/m1_demo_flow.rs`) that walks the whole demo flow:
+  log seven jobs, exercise list / search / filter / pagination, patch one,
+  delete another, then assert the truck rollups still match what's left.
 
 ## Prerequisites (Windows)
 
@@ -60,13 +82,17 @@ SQL files under `src-tauri/migrations/` and run automatically on every launch.
 
 ```
 src/                React frontend (Vite + TypeScript + Tailwind v4 + shadcn/ui)
-  components/       UI primitives (shadcn) + app components (Sidebar, Header)
-  routes/           One file per top-level page
-  lib/              utils, formatters, Tauri command wrappers
+  components/       UI primitives (shadcn) + app components (Sidebar, Header,
+                    DateRangePicker, JobStatusBadge)
+  routes/           One file per top-level page (Dashboard, Jobs, JobNew,
+                    JobDetail, Trucks, TruckDetail, Settings)
+  lib/              api wrapper, formatters, hooks
+  types.ts          Hand-mirrored wire types for the Rust command surface
 src-tauri/          Rust backend
   migrations/       SQL migrations applied by sqlx at startup
-  src/db/           Connection pool + AppState
-  src/commands/     Tauri commands invoked from the frontend
+  src/db/           Pool, AppState, models, truck-rollup helper
+  src/commands/     Tauri commands (sessions, jobs, trucks, db)
+  tests/            Integration tests against in-memory SQLite
 ```
 
 ## Useful scripts
@@ -77,8 +103,8 @@ pnpm build           # tsc + vite build (frontend bundle)
 pnpm tauri dev       # full app
 pnpm tauri build     # release installer
 
-cd src-tauri && cargo test    # Rust unit tests
-cd src-tauri && cargo clippy  # Rust lints
+cd src-tauri && cargo test          # all Rust tests (unit + integration)
+cd src-tauri && cargo clippy        # Rust lints (CI runs with -D warnings)
 ```
 
 ## Contributing
