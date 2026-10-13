@@ -39,11 +39,18 @@ pub async fn init_pool(app: &AppHandle) -> Result<SqlitePool> {
     Ok(pool)
 }
 
+/// Env var that points the app at a different data directory. The E2E suite
+/// sets it so tests run against a throwaway database, never the real one.
+pub const DATA_DIR_ENV: &str = "PROJECTTRUCKS_DATA_DIR";
+
 fn resolve_db_path(app: &AppHandle) -> Result<PathBuf> {
-    let mut dir = app
-        .path()
-        .app_data_dir()
-        .context("resolving app data dir")?;
+    let mut dir = match std::env::var_os(DATA_DIR_ENV).filter(|v| !v.is_empty()) {
+        Some(custom) => PathBuf::from(custom),
+        None => app
+            .path()
+            .app_data_dir()
+            .context("resolving app data dir")?,
+    };
     dir.push("projecttrucks.db");
     Ok(dir)
 }

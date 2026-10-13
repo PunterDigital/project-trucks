@@ -1,5 +1,7 @@
 # ProjectTrucks
 
+[![CI](https://github.com/PunterDigital/project-trucks/actions/workflows/ci.yml/badge.svg)](https://github.com/PunterDigital/project-trucks/actions/workflows/ci.yml)
+
 A local Euro Truck Simulator 2 delivery tracker. Runs on your own machine, reads
 telemetry while you play, and writes every kilometre and every job to a local
 SQLite database. No accounts, no cloud, no telemetry-back-to-us.
@@ -17,6 +19,16 @@ provenance is in [assets/telemetry-plugin/README.md](assets/telemetry-plugin/REA
 
 > _Screenshot placeholder — add a shot of the Jobs page once you've got a few
 > rows logged. Drop it in `docs/screenshots/jobs.png` and reference it here._
+
+## Download
+
+Grab the latest Windows installer or macOS `.dmg` from the
+[downloads page](https://punterdigital.github.io/personal-apps/) or the
+[GitHub Releases](https://github.com/PunterDigital/project-trucks/releases).
+Builds are unsigned: on Windows click **More info → Run anyway** at the
+SmartScreen prompt; on macOS right-click the app and choose **Open** (or allow
+it under System Settings → Privacy & Security). ETS2 telemetry capture (M2) is
+Windows-only; the macOS build supports manual logging.
 
 ## What you can do today (M1)
 
@@ -107,7 +119,12 @@ pnpm tauri build     # release installer
 
 cd src-tauri && cargo test          # all Rust tests (unit + integration)
 cd src-tauri && cargo clippy        # Rust lints (CI runs with -D warnings)
+pnpm typecheck                      # TypeScript (app + E2E)
+pnpm tauri build --no-bundle && pnpm test:e2e   # Playwright E2E against the real app (Windows)
 ```
+
+The E2E suite launches the built app with a throwaway data directory
+(`PROJECTTRUCKS_DATA_DIR`), so it never touches your real database.
 
 ## Contributing
 
