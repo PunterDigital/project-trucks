@@ -2,8 +2,10 @@
 // Playwright over the Chrome DevTools Protocol. Windows only: WebView2 is the
 // only Tauri webview that exposes CDP.
 //
-// Every test gets a fresh, throwaway data directory (PROJECTTRUCKS_DATA_DIR)
-// and WebView2 profile, so the suite never touches the real database.
+// The app opens the WebView2 DevTools port itself when PROJECTTRUCKS_E2E_CDP_PORT
+// is set (WebView2's own WEBVIEW2_* env vars are ignored on CI runners). Every
+// test gets a fresh, throwaway PROJECTTRUCKS_DATA_DIR, which holds both the
+// database and the WebView2 profile, so the suite never touches real data.
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -67,9 +69,9 @@ export const test = base.extend<Fixtures>({
     const app = spawn(resolveExe(), [], {
       env: {
         ...process.env,
+        // The app also puts its WebView2 profile under this folder.
         PROJECTTRUCKS_DATA_DIR: path.join(dataDir, "data"),
-        WEBVIEW2_USER_DATA_FOLDER: path.join(dataDir, "webview"),
-        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}`,
+        PROJECTTRUCKS_E2E_CDP_PORT: String(port),
       },
       stdio: "inherit",
     });

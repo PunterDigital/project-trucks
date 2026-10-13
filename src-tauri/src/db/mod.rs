@@ -43,9 +43,16 @@ pub async fn init_pool(app: &AppHandle) -> Result<SqlitePool> {
 /// sets it so tests run against a throwaway database, never the real one.
 pub const DATA_DIR_ENV: &str = "PROJECTTRUCKS_DATA_DIR";
 
+/// The data directory override from [`DATA_DIR_ENV`], if set.
+pub fn data_dir_override() -> Option<PathBuf> {
+    std::env::var_os(DATA_DIR_ENV)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
 fn resolve_db_path(app: &AppHandle) -> Result<PathBuf> {
-    let mut dir = match std::env::var_os(DATA_DIR_ENV).filter(|v| !v.is_empty()) {
-        Some(custom) => PathBuf::from(custom),
+    let mut dir = match data_dir_override() {
+        Some(custom) => custom,
         None => app
             .path()
             .app_data_dir()

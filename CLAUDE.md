@@ -26,13 +26,16 @@ checkout.
 
 Playwright drives the **real app binary** (not a dev server): `e2e/fixtures.ts` spawns
 `src-tauri/target/{release,debug}/projecttrucks.exe` (or `PROJECTTRUCKS_EXE`) with
-`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=…` and connects with
-`chromium.connectOverCDP`. Only WebView2 exposes CDP, so the suite skips on macOS; macOS CI does a
-build + `codesign --verify` + launch smoke test instead.
+`PROJECTTRUCKS_E2E_CDP_PORT=<port>`. The app then builds its main window with
+`--remote-debugging-port` (see `create_main_window` in `src-tauri/src/lib.rs`; the window is
+`create: false` in `tauri.conf.json`), and the test connects with `chromium.connectOverCDP`.
+WebView2's own `WEBVIEW2_*` env vars are ignored on GitHub's Windows runners, so don't switch back to
+them. Only WebView2 exposes CDP, so the suite skips on macOS; macOS CI does a build +
+`codesign --verify` + launch smoke test instead.
 
-Isolation: every test sets `PROJECTTRUCKS_DATA_DIR` (the SQLite location, see `src-tauri/src/db/mod.rs`)
-and `WEBVIEW2_USER_DATA_FOLDER` to a temp dir. Never run E2E without them — the default data dir is
-Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
+Isolation: every test sets `PROJECTTRUCKS_DATA_DIR` (see `src-tauri/src/db/mod.rs`), which holds the
+SQLite database and the WebView2 profile (`<dir>/webview`). Never run E2E without it: the default
+data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
 
 ## CI / release
 
