@@ -11,13 +11,9 @@
 //! totals.
 
 use chrono::{TimeZone, Utc};
-use projecttrucks_lib::commands::jobs::{
-    fetch_job, fetch_jobs, insert_job, patch_job, remove_job,
-};
+use projecttrucks_lib::commands::jobs::{fetch_job, fetch_jobs, insert_job, patch_job, remove_job};
 use projecttrucks_lib::commands::trucks::fetch_trucks;
-use projecttrucks_lib::db::models::{
-    JobFilter, JobPatch, JobSource, JobStatus, NewJob,
-};
+use projecttrucks_lib::db::models::{JobFilter, JobPatch, JobSource, JobStatus, NewJob};
 use projecttrucks_lib::db::rollups::truck_id;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::str::FromStr;
@@ -82,13 +78,83 @@ async fn m1_demo_flow_end_to_end() {
     // Step 1 — log seven manual jobs spread across two trucks, three statuses,
     // and a date range that we can later filter on.
     let inputs = vec![
-        manual_job("Scania", "R 730", "Hamburg", "Berlin", "Containers", 290.0, 4_250, JobStatus::Delivered, 1),
-        manual_job("Scania", "R 730", "Berlin", "Munich", "Steel coils", 585.0, 7_800, JobStatus::Delivered, 2),
-        manual_job("Scania", "R 730", "Munich", "Vienna", "Logs", 435.0, 5_200, JobStatus::Late, 3),
-        manual_job("Volvo", "FH 540", "Vienna", "Prague", "Furniture", 330.0, 4_100, JobStatus::Delivered, 4),
-        manual_job("Volvo", "FH 540", "Prague", "Warsaw", "Cement", 695.0, 8_400, JobStatus::Delivered, 5),
-        manual_job("Volvo", "FH 540", "Warsaw", "Berlin", "Glass", 575.0, 6_900, JobStatus::Cancelled, 6),
-        manual_job("Scania", "R 730", "Berlin", "Hamburg", "Containers", 295.0, 4_300, JobStatus::Delivered, 7),
+        manual_job(
+            "Scania",
+            "R 730",
+            "Hamburg",
+            "Berlin",
+            "Containers",
+            290.0,
+            4_250,
+            JobStatus::Delivered,
+            1,
+        ),
+        manual_job(
+            "Scania",
+            "R 730",
+            "Berlin",
+            "Munich",
+            "Steel coils",
+            585.0,
+            7_800,
+            JobStatus::Delivered,
+            2,
+        ),
+        manual_job(
+            "Scania",
+            "R 730",
+            "Munich",
+            "Vienna",
+            "Logs",
+            435.0,
+            5_200,
+            JobStatus::Late,
+            3,
+        ),
+        manual_job(
+            "Volvo",
+            "FH 540",
+            "Vienna",
+            "Prague",
+            "Furniture",
+            330.0,
+            4_100,
+            JobStatus::Delivered,
+            4,
+        ),
+        manual_job(
+            "Volvo",
+            "FH 540",
+            "Prague",
+            "Warsaw",
+            "Cement",
+            695.0,
+            8_400,
+            JobStatus::Delivered,
+            5,
+        ),
+        manual_job(
+            "Volvo",
+            "FH 540",
+            "Warsaw",
+            "Berlin",
+            "Glass",
+            575.0,
+            6_900,
+            JobStatus::Cancelled,
+            6,
+        ),
+        manual_job(
+            "Scania",
+            "R 730",
+            "Berlin",
+            "Hamburg",
+            "Containers",
+            295.0,
+            4_300,
+            JobStatus::Delivered,
+            7,
+        ),
     ];
     let mut ids = Vec::new();
     for input in inputs {
@@ -184,7 +250,10 @@ async fn m1_demo_flow_end_to_end() {
     assert_eq!(page2.items.len(), 3);
     // No overlap between pages.
     let page1_ids: Vec<_> = page1.items.iter().map(|j| j.id.as_str()).collect();
-    assert!(page2.items.iter().all(|j| !page1_ids.contains(&j.id.as_str())));
+    assert!(page2
+        .items
+        .iter()
+        .all(|j| !page1_ids.contains(&j.id.as_str())));
 
     // Step 7 — open one job (the third one) and patch notes + flagged via
     // patch_job. Verify it persisted.

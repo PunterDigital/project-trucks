@@ -12,6 +12,8 @@
   "app": {
     "windows": [
       {
+        "label": "main",
+        "create": false,
         "title": "ProjectTrucks",
         "width": 800,
         "height": 600
@@ -30,6 +32,12 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "10.15"
+    },
+    "shortDescription": "Local Euro Truck Simulator 2 delivery tracker",
+    "category": "Utility"
   }
 }

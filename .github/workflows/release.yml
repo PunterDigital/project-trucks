@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create release with notes from merged PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
+              --title "ProjectTrucks $GITHUB_REF_NAME" --generate-notes --verify-tag
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            args: ""
+          - name: macOS (universal)
+            os: macos-latest
+            args: --target universal-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: ProjectTrucks ${{ github.ref_name }}
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+      - name: Verify macOS signature
+        if: matrix.os == 'macos-latest'
+        run: |
+          for app in src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app; do
+            codesign --verify --deep --strict --verbose=2 "$app"
+          done
+
+  verify:
+    name: Verify release assets
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets=$(gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[].name')
+          echo "$assets"
+          for pattern in '_x64-setup\.exe$' '_x64_en-US\.msi$' '_universal\.dmg$'; do
+            echo "$assets" | grep -Eq "$pattern" || { echo "Missing asset matching $pattern"; exit 1; }
+          done

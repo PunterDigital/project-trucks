@@ -38,10 +38,7 @@ pub async fn list_trucks(state: State<'_, AppState>) -> Result<Vec<Truck>, Strin
 }
 
 #[tauri::command]
-pub async fn get_truck(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<Option<Truck>, String> {
+pub async fn get_truck(state: State<'_, AppState>, id: String) -> Result<Option<Truck>, String> {
     fetch_truck(&state.pool, &id)
         .await
         .map_err(|e| e.to_string())
@@ -52,9 +49,7 @@ mod tests {
     use super::*;
     use crate::commands::jobs::insert_job;
     use crate::commands::sessions::insert_session;
-    use crate::db::models::{
-        JobSource, JobStatus, NewJob, NewSession, SessionKind, SessionStatus,
-    };
+    use crate::db::models::{JobSource, JobStatus, NewJob, NewSession, SessionKind, SessionStatus};
     use crate::db::rollups::truck_id;
     use chrono::{TimeZone, Utc};
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -130,12 +125,18 @@ mod tests {
             .await
             .unwrap();
         // Mercedes: 100 km job + 30 km free-roam = 130
-        insert_session(&pool, session(SessionKind::Job, "Mercedes", "Actros", 100.0))
-            .await
-            .unwrap();
-        insert_session(&pool, session(SessionKind::FreeRoam, "Mercedes", "Actros", 30.0))
-            .await
-            .unwrap();
+        insert_session(
+            &pool,
+            session(SessionKind::Job, "Mercedes", "Actros", 100.0),
+        )
+        .await
+        .unwrap();
+        insert_session(
+            &pool,
+            session(SessionKind::FreeRoam, "Mercedes", "Actros", 30.0),
+        )
+        .await
+        .unwrap();
 
         let trucks = fetch_trucks(&pool).await.unwrap();
         assert_eq!(trucks.len(), 3);
@@ -150,8 +151,12 @@ mod tests {
     #[tokio::test]
     async fn manual_jobs_create_truck_row_with_zero_distance() {
         let pool = test_pool().await;
-        insert_job(&pool, manual_job("Iveco", "S-Way")).await.unwrap();
-        insert_job(&pool, manual_job("Iveco", "S-Way")).await.unwrap();
+        insert_job(&pool, manual_job("Iveco", "S-Way"))
+            .await
+            .unwrap();
+        insert_job(&pool, manual_job("Iveco", "S-Way"))
+            .await
+            .unwrap();
         let trucks = fetch_trucks(&pool).await.unwrap();
         assert_eq!(trucks.len(), 1);
         let t = &trucks[0];

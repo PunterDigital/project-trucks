@@ -1,0 +1,126 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm build
+
+  windows:
+    name: Windows (Rust checks, build, E2E)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+
+      # Tauri's build script needs the frontend dist folder to exist.
+      - name: Build frontend
+        run: pnpm build
+      - name: cargo fmt
+        working-directory: src-tauri
+        run: cargo fmt --check
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Build installers
+        run: pnpm tauri build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+      # E2E runs against the release binary that the installers package.
+      - name: E2E (Playwright over WebView2 CDP)
+        run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+
+  macos:
+    name: macOS (universal build + launch smoke)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: Build universal app
+        run: pnpm tauri build --target universal-apple-darwin
+      - name: Verify ad-hoc signature
+        run: |
+          for app in src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app; do
+            codesign --verify --deep --strict --verbose=2 "$app"
+          done
+      - name: Launch smoke test
+        run: |
+          app=$(ls -d src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app | head -1)
+          data=$(mktemp -d)
+          PROJECTTRUCKS_DATA_DIR="$data" "$app/Contents/MacOS/projecttrucks" &
+          pid=$!
+          sleep 15
+          kill -0 "$pid" || { echo "App exited during startup"; exit 1; }
+          test -f "$data/projecttrucks.db" || { echo "Database was not created"; exit 1; }
+          kill "$pid"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: error

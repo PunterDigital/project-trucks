@@ -129,8 +129,7 @@ pub async fn fetch_jobs(pool: &SqlitePool, filter: JobFilter) -> Result<JobsPage
         .await
         .context("listing jobs")?;
 
-    let mut cb: QueryBuilder<Sqlite> =
-        QueryBuilder::new("SELECT COUNT(*) FROM jobs WHERE 1=1");
+    let mut cb: QueryBuilder<Sqlite> = QueryBuilder::new("SELECT COUNT(*) FROM jobs WHERE 1=1");
     apply_job_filters(&mut cb, &filter, search_pattern.as_deref());
     let total: (i64,) = cb
         .build_query_as::<(i64,)>()
@@ -209,10 +208,7 @@ pub async fn patch_job(pool: &SqlitePool, id: &str, patch: JobPatch) -> Result<O
     qb.push(" WHERE id = ");
     qb.push_bind(id);
 
-    qb.build()
-        .execute(pool)
-        .await
-        .context("updating job")?;
+    qb.build().execute(pool).await.context("updating job")?;
 
     fetch_job(pool, id).await
 }
@@ -277,16 +273,16 @@ pub async fn update_job(
 
 #[tauri::command]
 pub async fn delete_job(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    remove_job(&state.pool, &id).await.map_err(|e| e.to_string())
+    remove_job(&state.pool, &id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::sessions::insert_session;
-    use crate::db::models::{
-        JobSource, JobStatus, NewSession, SessionKind, SessionStatus,
-    };
+    use crate::db::models::{JobSource, JobStatus, NewSession, SessionKind, SessionStatus};
     use crate::db::rollups::truck_id;
     use chrono::{TimeZone, Utc};
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
@@ -350,13 +346,12 @@ mod tests {
         assert_eq!(job.source, JobSource::Manual);
         assert!(!job.flagged);
 
-        let (total_jobs, total_distance): (i64, f64) = sqlx::query_as(
-            "SELECT total_jobs, total_distance_km FROM trucks WHERE id = ?",
-        )
-        .bind(truck_id("Scania", "R 730"))
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let (total_jobs, total_distance): (i64, f64) =
+            sqlx::query_as("SELECT total_jobs, total_distance_km FROM trucks WHERE id = ?")
+                .bind(truck_id("Scania", "R 730"))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(total_jobs, 1);
         assert_eq!(total_distance, 0.0);
     }
