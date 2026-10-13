@@ -55,13 +55,12 @@ pub async fn recompute_truck(pool: &SqlitePool, make: &str, model: &str) -> Resu
         .fetch_one(pool)
         .await?;
 
-    let (total_jobs,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM jobs WHERE truck_make = ? AND truck_model = ?",
-    )
-    .bind(make)
-    .bind(model)
-    .fetch_one(pool)
-    .await?;
+    let (total_jobs,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE truck_make = ? AND truck_model = ?")
+            .bind(make)
+            .bind(model)
+            .fetch_one(pool)
+            .await?;
 
     let now = chrono::Utc::now().to_rfc3339();
 

@@ -313,7 +313,12 @@ mod tests {
     #[test]
     fn driving_session_uses_camel_case_keys() {
         let json = serde_json::to_value(sample_session()).unwrap();
-        let keys: Vec<&str> = json.as_object().unwrap().keys().map(String::as_str).collect();
+        let keys: Vec<&str> = json
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
         for key in [
             "id",
             "kind",

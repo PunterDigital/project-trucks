@@ -12,9 +12,7 @@ use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::db::models::{
-    DrivingSession, NewSession, SessionFilter, SessionsPage,
-};
+use crate::db::models::{DrivingSession, NewSession, SessionFilter, SessionsPage};
 use crate::db::rollups::recompute_truck;
 use crate::db::AppState;
 
@@ -231,13 +229,12 @@ mod tests {
         insert_session(&pool, sample_input(SessionKind::Job, 300.0))
             .await
             .unwrap();
-        let (delivery,): (f64,) = sqlx::query_as(
-            "SELECT total_delivery_distance FROM trucks WHERE id = ?",
-        )
-        .bind(truck_id("Scania", "R 730"))
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let (delivery,): (f64,) =
+            sqlx::query_as("SELECT total_delivery_distance FROM trucks WHERE id = ?")
+                .bind(truck_id("Scania", "R 730"))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
         assert_eq!(delivery, 300.0);
     }
 
