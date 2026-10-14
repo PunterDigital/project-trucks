@@ -49,12 +49,16 @@ test("log a job, see it in history and the fleet, then delete it", async ({ page
   await page.getByPlaceholder("Search city, company, cargo…").fill("Rotterdam");
   await expect(page.getByRole("row").filter({ hasText: "Rotterdam" })).toHaveCount(1);
 
-  // The truck rollup picks the job up. (Distance comes from driving
-  // sessions, which manual jobs don't create, so only the trip count moves.)
+  // The truck rollup picks the job up: a manual job has no driving session,
+  // so its own distance counts as delivery km.
   await page.getByRole("link", { name: "Trucks", exact: true }).click();
   const truck = page.getByRole("row").filter({ hasText: "Scania" });
   await expect(truck).toContainText("S 730");
   await expect(truck.getByRole("cell").nth(2)).toHaveText("1");
+  const distance = truck.getByRole("cell").nth(3);
+  await expect(distance).toContainText("412 km delivery");
+  await expect(distance).toContainText("0 km free roam");
+  await expect(distance.locator("div").first()).toHaveText("412 km");
 
   // Open the job and delete it.
   await page.getByRole("link", { name: "Jobs", exact: true }).click();

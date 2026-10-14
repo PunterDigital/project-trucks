@@ -2,6 +2,8 @@
 //!
 //! The `trucks` table is purely derived state — it's the cached sum of every
 //! row in `driving_sessions` and `jobs` for a given `(make, model)` pair.
+//! Distance comes from sessions, plus the `distance_km` of manual jobs (which
+//! have no session), counted as delivery distance.
 //! Every write path that touches sessions or jobs must call
 //! [`recompute_truck`] in the same transaction so the rollup never drifts.
 //!
@@ -55,12 +57,25 @@ pub async fn recompute_truck(pool: &SqlitePool, make: &str, model: &str) -> Resu
         .fetch_one(pool)
         .await?;
 
-    let (total_jobs,): (i64,) =
-        sqlx::query_as("SELECT COUNT(*) FROM jobs WHERE truck_make = ? AND truck_model = ?")
-            .bind(make)
-            .bind(model)
-            .fetch_one(pool)
-            .await?;
+    // Manual jobs have no driving_sessions row to carry their km, so their own
+    // distance counts as delivery distance. Session-linked jobs are already in
+    // the session sum above and must not be added twice. A telemetry job whose
+    // session was deleted keeps source = 'TELEMETRY', so deleting a session
+    // still drops its km.
+    let (total_jobs, manual_job_distance): (i64, f64) = sqlx::query_as(
+        "SELECT
+           COUNT(*),
+           COALESCE(SUM(CASE WHEN source = 'MANUAL' AND session_id IS NULL
+                             THEN distance_km ELSE 0.0 END), 0.0)
+         FROM jobs
+         WHERE truck_make = ? AND truck_model = ?",
+    )
+    .bind(make)
+    .bind(model)
+    .fetch_one(pool)
+    .await?;
+    let total_distance = total_distance + manual_job_distance;
+    let delivery_distance = delivery_distance + manual_job_distance;
 
     let now = chrono::Utc::now().to_rfc3339();
 
@@ -139,6 +154,28 @@ mod tests {
     }
 
     async fn insert_job(pool: &SqlitePool, id: &str, session_id: &str, make: &str, model: &str) {
+        insert_job_with(pool, id, Some(session_id), make, model, 100.0, "TELEMETRY").await;
+    }
+
+    async fn insert_manual_job(
+        pool: &SqlitePool,
+        id: &str,
+        make: &str,
+        model: &str,
+        distance: f64,
+    ) {
+        insert_job_with(pool, id, None, make, model, distance, "MANUAL").await;
+    }
+
+    async fn insert_job_with(
+        pool: &SqlitePool,
+        id: &str,
+        session_id: Option<&str>,
+        make: &str,
+        model: &str,
+        distance: f64,
+        source: &str,
+    ) {
         sqlx::query(
             "INSERT INTO jobs
                (id, session_id, truck_make, truck_model,
@@ -147,14 +184,16 @@ mod tests {
                 distance_km, duration_sec, avg_speed_kmh,
                 started_at, completed_at, status, source)
              VALUES (?, ?, ?, ?, 'A', 'a', 'B', 'b', 'c', 'C', 1000, 1000,
-                     100.0, 3600, 100.0,
+                     ?, 3600, 100.0,
                      '2026-05-01T10:00:00Z', '2026-05-01T11:00:00Z',
-                     'DELIVERED', 'TELEMETRY')",
+                     'DELIVERED', ?)",
         )
         .bind(id)
         .bind(session_id)
         .bind(make)
         .bind(model)
+        .bind(distance)
+        .bind(source)
         .execute(pool)
         .await
         .unwrap();
@@ -293,10 +332,66 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
+        // The orphaned job is still a telemetry job, so its own km don't count.
         assert_eq!(total, 0.0);
         assert_eq!(delivery, 0.0);
         // Job row is still there and matches truck make/model.
         assert_eq!(jobs, 1);
+    }
+
+    async fn truck_totals(pool: &SqlitePool, make: &str, model: &str) -> (f64, f64, f64, i64) {
+        sqlx::query_as(
+            "SELECT total_distance_km, total_delivery_distance, total_free_roam_distance, total_jobs
+               FROM trucks WHERE id = ?",
+        )
+        .bind(truck_id(make, model))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn manual_job_counts_as_delivery_distance() {
+        let pool = test_pool().await;
+        insert_manual_job(&pool, "job_1", "Scania", "S 730", 412.0).await;
+        recompute_truck(&pool, "Scania", "S 730").await.unwrap();
+
+        assert_eq!(
+            truck_totals(&pool, "Scania", "S 730").await,
+            (412.0, 412.0, 0.0, 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn session_linked_job_is_not_double_counted() {
+        let pool = test_pool().await;
+        // The job row says 100 km, the session says 200: only the session counts.
+        insert_session(&pool, "ses_1", "JOB", "Scania", "R 730", 200.0).await;
+        insert_job(&pool, "job_1", "ses_1", "Scania", "R 730").await;
+        recompute_truck(&pool, "Scania", "R 730").await.unwrap();
+
+        assert_eq!(
+            truck_totals(&pool, "Scania", "R 730").await,
+            (200.0, 200.0, 0.0, 1)
+        );
+    }
+
+    #[tokio::test]
+    async fn mixed_sessions_and_manual_jobs_add_up() {
+        let pool = test_pool().await;
+        insert_session(&pool, "ses_1", "JOB", "Scania", "R 730", 200.0).await;
+        insert_job(&pool, "job_1", "ses_1", "Scania", "R 730").await;
+        insert_session(&pool, "ses_2", "FREE_ROAM", "Scania", "R 730", 30.0).await;
+        insert_manual_job(&pool, "job_2", "Scania", "R 730", 412.0).await;
+        insert_manual_job(&pool, "job_3", "Scania", "R 730", 88.0).await;
+        // Another truck's manual job stays on that truck.
+        insert_manual_job(&pool, "job_4", "Volvo", "FH 540", 999.0).await;
+        recompute_truck(&pool, "Scania", "R 730").await.unwrap();
+
+        assert_eq!(
+            truck_totals(&pool, "Scania", "R 730").await,
+            (730.0, 700.0, 30.0, 3)
+        );
     }
 
     #[tokio::test]

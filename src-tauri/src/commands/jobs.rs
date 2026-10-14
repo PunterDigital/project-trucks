@@ -353,7 +353,8 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(total_jobs, 1);
-        assert_eq!(total_distance, 0.0);
+        // No driving session, so the job's own 290 km counts.
+        assert_eq!(total_distance, 290.0);
     }
 
     #[tokio::test]

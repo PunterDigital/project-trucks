@@ -278,8 +278,9 @@ async fn m1_demo_flow_end_to_end() {
     assert_eq!(refetched.notes.as_deref(), Some("Heavier than declared"));
 
     // Step 8 — truck rollup snapshot BEFORE we delete anything. Manual jobs
-    // don't create driving_session rows, so distance columns are all 0, but
-    // total_jobs should reflect the four Scanias and three Volvos.
+    // don't create driving_session rows, so each truck's distance is the sum of
+    // its manual jobs' km (all delivery), and total_jobs should reflect the
+    // four Scanias and three Volvos.
     let trucks_before = fetch_trucks(&pool).await.unwrap();
     assert_eq!(trucks_before.len(), 2);
     let scania_id = truck_id("Scania", "R 730");
@@ -288,8 +289,27 @@ async fn m1_demo_flow_end_to_end() {
     let volvo = trucks_before.iter().find(|t| t.id == volvo_id).unwrap();
     assert_eq!(scania.total_jobs, 4);
     assert_eq!(volvo.total_jobs, 3);
-    assert_eq!(scania.total_distance_km, 0.0);
-    assert_eq!(volvo.total_distance_km, 0.0);
+    let job_km = |make: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let (km,): (f64,) = sqlx::query_as(
+                "SELECT COALESCE(SUM(distance_km), 0.0) FROM jobs WHERE truck_make = ?",
+            )
+            .bind(make)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            km
+        }
+    };
+    let scania_km = job_km("Scania").await;
+    let volvo_km = job_km("Volvo").await;
+    assert!(scania_km > 0.0 && volvo_km > 0.0);
+    assert_eq!(scania.total_distance_km, scania_km);
+    assert_eq!(scania.total_delivery_distance, scania_km);
+    assert_eq!(scania.total_free_roam_distance, 0.0);
+    assert_eq!(volvo.total_distance_km, volvo_km);
+    let third_km = refetched.distance_km;
 
     // Step 9 — delete the patched (Scania) job. Truck rollup should drop the
     // count for Scania by 1, Volvo unchanged.
@@ -299,6 +319,8 @@ async fn m1_demo_flow_end_to_end() {
     let volvo_after = trucks_after.iter().find(|t| t.id == volvo_id).unwrap();
     assert_eq!(scania_after.total_jobs, 3, "Scania count drops by one");
     assert_eq!(volvo_after.total_jobs, 3, "Volvo count unchanged");
+    assert_eq!(scania_after.total_distance_km, scania_km - third_km);
+    assert_eq!(volvo_after.total_distance_km, volvo_km);
     // The deleted job is genuinely gone.
     assert!(fetch_job(&pool, third).await.unwrap().is_none());
     let final_listed = fetch_jobs(&pool, JobFilter::default()).await.unwrap();
