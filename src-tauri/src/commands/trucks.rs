@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn manual_jobs_create_truck_row_with_zero_distance() {
+    async fn manual_jobs_count_their_own_distance_as_delivery() {
         let pool = test_pool().await;
         insert_job(&pool, manual_job("Iveco", "S-Way"))
             .await
@@ -162,9 +162,10 @@ mod tests {
         let t = &trucks[0];
         assert_eq!(t.make, "Iveco");
         assert_eq!(t.total_jobs, 2);
-        // Manual entries don't create driving_session rows, so km stays 0.
-        assert_eq!(t.total_distance_km, 0.0);
-        assert_eq!(t.total_delivery_distance, 0.0);
+        // Manual entries have no driving session, so each job's own km
+        // counts as delivery distance.
+        assert_eq!(t.total_distance_km, 200.0);
+        assert_eq!(t.total_delivery_distance, 200.0);
         assert_eq!(t.total_free_roam_distance, 0.0);
     }
 
