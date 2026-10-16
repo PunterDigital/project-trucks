@@ -2,7 +2,6 @@ import { Controller, useForm, type Control } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import * as z from "zod";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -26,104 +25,9 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 
 import { api } from "@/lib/api";
-import type { JobStatus, NewJob } from "@/types";
+import { jobFormSchema, toNewJob, type JobFormValues } from "@/lib/job-form";
+import type { JobStatus } from "@/types";
 
-// ---------------------------------------------------------------------------
-// Schema
-// ---------------------------------------------------------------------------
-//
-// All editable fields are strings in the form state — easy to render, and we
-// avoid the z.coerce.number() input/output type split that confuses
-// react-hook-form's TFieldValues vs TTransformedValues. Numeric validation
-// happens in refine() and the parse-to-Number happens once in onSubmit.
-
-const nonNegativeInt = (value: string) => {
-  if (value.trim() === "") return false;
-  const n = Number(value);
-  return Number.isFinite(n) && Number.isInteger(n) && n >= 0;
-};
-const nonNegativeNumber = (value: string) => {
-  if (value.trim() === "") return false;
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 0;
-};
-const positiveNumber = (value: string) => {
-  if (value.trim() === "") return false;
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0;
-};
-
-const formSchema = z
-  .object({
-    sourceCity: z.string().min(1, "Required"),
-    sourceCompany: z.string().min(1, "Required"),
-    destCity: z.string().min(1, "Required"),
-    destCompany: z.string().min(1, "Required"),
-    cargoId: z.string().min(1, "Required"),
-    cargoName: z.string().min(1, "Required"),
-    cargoMassKg: z.string().refine(nonNegativeNumber, "Must be a number ≥ 0"),
-    declaredIncome: z
-      .string()
-      .refine(nonNegativeInt, "Whole numbers ≥ 0 only"),
-    distanceKm: z.string().refine(positiveNumber, "Must be > 0"),
-    durationHours: z.string().refine(nonNegativeInt, "Whole numbers ≥ 0 only"),
-    durationMinutes: z.string().refine((v) => {
-      if (v.trim() === "") return false;
-      const n = Number(v);
-      return Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n <= 59;
-    }, "Whole number 0..59"),
-    startedAt: z.string().min(1, "Required"),
-    completedAt: z.string().min(1, "Required"),
-    status: z.enum(["DELIVERED", "LATE", "CANCELLED"]),
-    truckMake: z.string().min(1, "Required"),
-    truckModel: z.string().min(1, "Required"),
-    fuelUsedL: z.string().optional(),
-    damageDelta: z.string().optional(),
-    notes: z.string().optional(),
-  })
-  .refine(
-    (d) => {
-      const started = Date.parse(d.startedAt);
-      const completed = Date.parse(d.completedAt);
-      if (Number.isNaN(started) || Number.isNaN(completed)) return true;
-      return completed > started;
-    },
-    {
-      message: "Must be after started at",
-      path: ["completedAt"],
-    },
-  )
-  .refine(
-    (d) => Number(d.durationHours) > 0 || Number(d.durationMinutes) > 0,
-    {
-      message: "Duration must be > 0",
-      path: ["durationMinutes"],
-    },
-  )
-  .refine(
-    (d) => {
-      if (!d.fuelUsedL) return true;
-      const n = Number(d.fuelUsedL);
-      return Number.isFinite(n) && n >= 0;
-    },
-    {
-      message: "Must be a number ≥ 0",
-      path: ["fuelUsedL"],
-    },
-  )
-  .refine(
-    (d) => {
-      if (!d.damageDelta) return true;
-      const n = Number(d.damageDelta);
-      return Number.isFinite(n) && n >= 0 && n <= 1;
-    },
-    {
-      message: "Must be between 0 and 1",
-      path: ["damageDelta"],
-    },
-  );
-
-type FormValues = z.infer<typeof formSchema>;
 
 // datetime-local needs "YYYY-MM-DDTHH:MM" without timezone or seconds.
 function toLocalInputValue(d: Date): string {
@@ -151,8 +55,8 @@ const STATUS_OPTIONS: { value: JobStatus; label: string }[] = [
 export function JobNew() {
   const navigate = useNavigate();
 
-  const form = useForm<FormValues>({
-    resolver: zodResolver(formSchema),
+  const form = useForm<JobFormValues>({
+    resolver: zodResolver(jobFormSchema),
     defaultValues: {
       sourceCity: "",
       sourceCompany: "",
@@ -176,31 +80,8 @@ export function JobNew() {
     },
   });
 
-  const onSubmit = async (data: FormValues) => {
-    const durationSec =
-      Number(data.durationHours) * 3600 + Number(data.durationMinutes) * 60;
-    const input: NewJob = {
-      sessionId: null,
-      truckMake: data.truckMake.trim(),
-      truckModel: data.truckModel.trim(),
-      sourceCity: data.sourceCity.trim(),
-      sourceCompany: data.sourceCompany.trim(),
-      destCity: data.destCity.trim(),
-      destCompany: data.destCompany.trim(),
-      cargoId: data.cargoId.trim(),
-      cargoName: data.cargoName.trim(),
-      cargoMassKg: Number(data.cargoMassKg),
-      declaredIncome: Number(data.declaredIncome),
-      distanceKm: Number(data.distanceKm),
-      durationSec,
-      fuelUsedL: data.fuelUsedL ? Number(data.fuelUsedL) : null,
-      damageDelta: data.damageDelta ? Number(data.damageDelta) : null,
-      startedAt: new Date(data.startedAt).toISOString(),
-      completedAt: new Date(data.completedAt).toISOString(),
-      status: data.status,
-      source: "MANUAL",
-      notes: data.notes ? data.notes.trim() : null,
-    };
+  const onSubmit = async (data: JobFormValues) => {
+    const input = toNewJob(data);
 
     try {
       await api.createJob(input);
@@ -399,10 +280,10 @@ export function JobNew() {
 // Small field shortcuts
 // ---------------------------------------------------------------------------
 
-type FormControl = Control<FormValues>;
+type FormControl = Control<JobFormValues>;
 
 interface BaseFieldProps {
-  name: keyof FormValues;
+  name: keyof JobFormValues;
   label: string;
   description?: string;
   control: FormControl;

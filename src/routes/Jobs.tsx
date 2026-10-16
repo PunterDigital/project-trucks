@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { DateRange } from "react-day-picker";
 
@@ -65,44 +65,59 @@ export function Jobs() {
   const [page, setPage] = useState(0);
 
   const [data, setData] = useState<JobsPage | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // The request the last response (or error) belongs to. While it differs
+  // from the current request, the list is loading.
+  const [settled, setSettled] = useState<{
+    key: string;
+    error: string | null;
+  } | null>(null);
 
   const noFilters = !search.trim() && status === "ALL" && !range?.from;
 
-  // Filter changes reset to the first page.
-  useEffect(() => {
+  // Filter changes reset to the first page. Done during render (not in an
+  // effect) so the old page is never fetched with the new filters.
+  const [pageFilters, setPageFilters] = useState({ search, status, range });
+  if (
+    pageFilters.search !== search ||
+    pageFilters.status !== status ||
+    pageFilters.range !== range
+  ) {
+    setPageFilters({ search, status, range });
     setPage(0);
-  }, [search, status, range]);
+  }
 
-  useEffect(() => {
-    const filter: JobFilter = {
+  const filter = useMemo(() => {
+    const f: JobFilter = {
       limit: PAGE_SIZE,
       offset: page * PAGE_SIZE,
     };
-    if (search.trim()) filter.search = search.trim();
-    if (status !== "ALL") filter.status = status;
-    if (range?.from) filter.from = startOfDayIso(range.from);
-    if (range?.to) filter.to = endOfDayExclusiveIso(range.to);
+    if (search.trim()) f.search = search.trim();
+    if (status !== "ALL") f.status = status;
+    if (range?.from) f.from = startOfDayIso(range.from);
+    if (range?.to) f.to = endOfDayExclusiveIso(range.to);
+    return f;
+  }, [search, status, range, page]);
+  const requestKey = JSON.stringify(filter);
 
+  useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
     api
       .listJobs(filter)
       .then((p) => {
-        if (!cancelled) setData(p);
+        if (cancelled) return;
+        setData(p);
+        setSettled({ key: requestKey, error: null });
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(String(e));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setSettled({ key: requestKey, error: String(e) });
       });
     return () => {
       cancelled = true;
     };
-  }, [search, status, range, page]);
+  }, [filter, requestKey]);
+
+  const loading = settled?.key !== requestKey;
+  const error = loading ? null : (settled?.error ?? null);
 
   const empty = !loading && data && data.items.length === 0;
   const showFirstRunCta = empty && noFilters && data.total === 0;

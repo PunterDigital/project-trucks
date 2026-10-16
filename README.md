@@ -120,6 +120,8 @@ pnpm tauri build     # release installer
 cd src-tauri && cargo test          # all Rust tests (unit + integration)
 cd src-tauri && cargo clippy        # Rust lints (CI runs with -D warnings)
 pnpm typecheck                      # TypeScript (app + E2E)
+pnpm lint                           # ESLint
+pnpm test                           # Vitest unit tests
 pnpm tauri build --no-bundle && pnpm test:e2e   # Playwright E2E against the real app (Windows)
 ```
 
