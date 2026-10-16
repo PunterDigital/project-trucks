@@ -69,3 +69,60 @@ test("log a job, see it in history and the fleet, then delete it", async ({ page
   await expect(page.getByText("Job deleted")).toBeVisible();
   await expect(page.getByRole("link", { name: "Log your first job manually" })).toBeVisible();
 });
+
+test("pages through jobs and goes back to page 1 when the search changes", async ({ page }) => {
+  // Seed 30 jobs straight through the Tauri command the form uses.
+  await page.evaluate(async () => {
+    const tauri = (window as unknown as {
+      __TAURI_INTERNALS__: { invoke: (cmd: string, args: unknown) => Promise<unknown> };
+    }).__TAURI_INTERNALS__;
+    for (let i = 1; i <= 30; i++) {
+      const completed = new Date(Date.UTC(2026, 4, 1, 12) + i * 3600_000);
+      await tauri.invoke("create_job", {
+        input: {
+          sessionId: null,
+          truckMake: "Volvo",
+          truckModel: "FH16",
+          sourceCity: "Lyon",
+          sourceCompany: "Posped",
+          destCity: `Town ${String(i).padStart(2, "0")}`,
+          destCompany: "Tradeaux",
+          cargoId: "planks",
+          cargoName: "Planks",
+          cargoMassKg: 10000,
+          declaredIncome: 1000,
+          distanceKm: 100,
+          durationSec: 3600,
+          fuelUsedL: null,
+          damageDelta: null,
+          startedAt: new Date(completed.getTime() - 3600_000).toISOString(),
+          completedAt: completed.toISOString(),
+          status: "DELIVERED",
+          source: "MANUAL",
+          notes: null,
+        },
+      });
+    }
+  });
+
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  await expect(page.getByText("30 deliveries logged")).toBeVisible();
+  await expect(page.getByText("Showing 1–25 of 30")).toBeVisible();
+  await expect(page.getByText("Page 1 of 2")).toBeVisible();
+
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByText("Showing 26–30 of 30")).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "Town" })).toHaveCount(5);
+  await expect(page.getByRole("button", { name: "Next" })).toBeDisabled();
+
+  // A new search starts from the first page again ("Town 1" = Town 10–19).
+  await page.getByPlaceholder("Search city, company, cargo…").fill("Town 1");
+  await expect(page.getByText("Showing 1–10 of 10")).toBeVisible();
+  await expect(page.getByText("Page 1 of 1")).toBeVisible();
+  await expect(page.getByRole("row").filter({ hasText: "Town 1" })).toHaveCount(10);
+
+  // Opening a row loads that job.
+  await page.getByRole("row").filter({ hasText: "Town 15" }).click();
+  await expect(page.getByText("Town 15").first()).toBeVisible();
+  await expect(page.getByText("Lyon").first()).toBeVisible();
+});

@@ -14,6 +14,7 @@ permissions:
 
 jobs:
   frontend:
+    # The name is a required status check on main: keep it unchanged.
     name: Frontend (typecheck + build)
     runs-on: ubuntu-latest
     steps:
@@ -27,6 +28,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
       - run: pnpm build
 
   windows:

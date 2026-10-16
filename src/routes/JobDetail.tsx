@@ -56,11 +56,18 @@ export function JobDetail() {
     flagReason: string;
   } | null>(null);
 
+  // Back to "loading" when the route moves to another job. Done during
+  // render (not in the effect) so the old job is never shown under the new id.
+  const [loadedId, setLoadedId] = useState(id);
+  if (loadedId !== id) {
+    setLoadedId(id);
+    setLoad({ kind: "loading" });
+  }
+
   // Load
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
-    setLoad({ kind: "loading" });
     api
       .getJob(id)
       .then((j) => {
