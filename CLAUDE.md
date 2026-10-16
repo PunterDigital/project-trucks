@@ -49,6 +49,13 @@ data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
 
 ## Quirks
 
+- CSP lives in `tauri.conf.json` (`app.security.csp`). Tauri adds script hashes to it only when it
+  bundles `dist/`: `tauri dev` loads Vite's `http://localhost:1420` with **no CSP at all**, so check
+  CSP changes against a release binary (`pnpm tauri build --no-bundle` + `pnpm test:e2e`). The E2E
+  fixture fails any test with a console error, which is how a violation shows up. `style-src` needs
+  `'unsafe-inline'` for sonner's runtime `<style>` tag; Tauri doesn't add a nonce there, so it works.
+  Anything new that loads remote content (fonts, images, `fetch`) needs the CSP widened.
+
 - The ETS2 telemetry plugin DLLs under `assets/telemetry-plugin/` are third-party binaries. Their
   SHA-256s are in that folder's README; re-check them if the files change.
 - Telemetry (M2) is Windows-only (memory-mapped file from the plugin). The macOS build is useful for
