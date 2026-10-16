@@ -6,12 +6,15 @@
 // is set (WebView2's own WEBVIEW2_* env vars are ignored on CI runners). Every
 // test gets a fresh, throwaway PROJECTTRUCKS_DATA_DIR, which holds both the
 // database and the WebView2 profile, so the suite never touches real data.
+//
+// Every test fails on a console error or uncaught exception, which includes
+// Content Security Policy violations ("Refused to load ...").
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { chromium, test as base, type Browser, type Page } from "@playwright/test";
+import { chromium, expect, test as base, type Browser, type Page } from "@playwright/test";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
@@ -80,7 +83,16 @@ export const test = base.extend<Fixtures>({
       const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
       const page = await appPage(browser);
       await page.waitForLoadState("domcontentloaded");
+      // Listen first, then reload, so errors from the initial load (CSP
+      // violations, failed fonts) are caught too.
+      const errors: string[] = [];
+      page.on("console", (msg) => {
+        if (msg.type() === "error") errors.push(msg.text());
+      });
+      page.on("pageerror", (err) => errors.push(err.message));
+      await page.reload({ waitUntil: "load" });
       await use(page);
+      expect(errors, "console errors").toEqual([]);
       await browser.close();
     } finally {
       app.kill();
@@ -89,4 +101,4 @@ export const test = base.extend<Fixtures>({
   },
 });
 
-export { expect } from "@playwright/test";
+export { expect };
