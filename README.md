@@ -22,13 +22,12 @@ provenance is in [assets/telemetry-plugin/README.md](assets/telemetry-plugin/REA
 
 ## Download
 
-Grab the latest Windows installer or macOS `.dmg` from the
+ProjectTrucks is **Windows only**. Grab the latest
+installer (`.exe` or `.msi`) from the
 [downloads page](https://punterdigital.github.io/personal-apps/) or the
 [GitHub Releases](https://github.com/PunterDigital/project-trucks/releases).
-Builds are unsigned: on Windows click **More info → Run anyway** at the
-SmartScreen prompt; on macOS right-click the app and choose **Open** (or allow
-it under System Settings → Privacy & Security). ETS2 telemetry capture (M2) is
-Windows-only; the macOS build supports manual logging.
+Builds are unsigned: click **More info → Run anyway** at the SmartScreen prompt.
+(v0.1.0 also shipped a macOS `.dmg` for manual logging; later versions don't.)
 
 ## What you can do today (M1)
 
