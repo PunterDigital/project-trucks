@@ -11,7 +11,7 @@
 // Content Security Policy violations ("Refused to load ...").
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { chromium, expect, test as base, type Browser, type Page } from "@playwright/test";
@@ -58,20 +58,35 @@ async function appPage(browser: Browser, timeoutMs = 30_000): Promise<Page> {
   throw new Error("App window never loaded");
 }
 
-type Fixtures = { page: Page; dataDir: string };
+type Fixtures = {
+  page: Page;
+  dataDir: string;
+  /** Telemetry replay fixture (see src-tauri/src/telemetry/replay.rs); `null` = live reader. */
+  replay: unknown;
+};
 
 export const test = base.extend<Fixtures>({
+  replay: [null, { option: true }],
+
   dataDir: async ({}, use) => {
     const dir = mkdtempSync(path.join(tmpdir(), "projecttrucks-e2e-"));
     await use(dir);
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   },
 
-  page: async ({ dataDir }, use, testInfo) => {
+  page: async ({ dataDir, replay }, use, testInfo) => {
     const port = 9300 + testInfo.workerIndex;
+    const replayEnv: Record<string, string> = {};
+    if (replay) {
+      const file = path.join(dataDir, "replay.json");
+      writeFileSync(file, JSON.stringify(replay));
+      replayEnv.PROJECTTRUCKS_TELEMETRY_REPLAY = file;
+      replayEnv.PROJECTTRUCKS_TELEMETRY_REPLAY_INTERVAL_MS = "400";
+    }
     const app = spawn(resolveExe(), [], {
       env: {
         ...process.env,
+        ...replayEnv,
         // The app also puts its WebView2 profile under this folder.
         PROJECTTRUCKS_DATA_DIR: path.join(dataDir, "data"),
         PROJECTTRUCKS_E2E_CDP_PORT: String(port),

@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useTelemetryStatus } from "@/lib/useTelemetryEvents";
 import type { DbPing } from "@/types";
 
 export function Dashboard() {
   const [ping, setPing] = useState<DbPing | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const telemetry = useTelemetryStatus();
 
   useEffect(() => {
     api
@@ -33,6 +35,9 @@ export function Dashboard() {
         </p>
       </div>
       <p className={`text-sm font-mono ${tone}`}>db_ping: {status}</p>
+      <p className="text-sm font-mono text-muted-foreground">
+        telemetry: {telemetry}
+      </p>
     </div>
   );
 }

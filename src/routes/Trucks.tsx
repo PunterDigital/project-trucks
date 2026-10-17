@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/table";
 
 import { api } from "@/lib/api";
+import { useCaptureRefresh } from "@/lib/useTelemetryEvents";
 import { formatKm, formatRelativeDate } from "@/lib/format";
 import type { Truck } from "@/types";
 
@@ -19,6 +20,7 @@ export function Trucks() {
   const navigate = useNavigate();
   const [trucks, setTrucks] = useState<Truck[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const captured = useCaptureRefresh();
 
   useEffect(() => {
     let cancelled = false;
@@ -33,7 +35,7 @@ export function Trucks() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [captured]);
 
   if (error) {
     return (

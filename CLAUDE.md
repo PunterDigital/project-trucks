@@ -67,3 +67,8 @@ data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
 - Telemetry (M2) reads a memory-mapped file from the plugin, which is why the app is Windows-only.
 - A copied-in `src-tauri/target` from another path breaks the build ("failed to read plugin
   permissions … app_hide.toml"): delete `src-tauri/target`.
+- Telemetry replay: set `PROJECTTRUCKS_TELEMETRY_REPLAY=<fixture.json>` (and optionally
+  `PROJECTTRUCKS_TELEMETRY_REPLAY_INTERVAL_MS`) and the background task replays recorded snapshots
+  instead of reading ETS2 (`src-tauri/src/telemetry/replay.rs`, `e2e/telemetry.spec.ts`). Each sample's
+  `t` is virtual seconds, so a fixture can cross the 5 minute idle timeout in one step. The task runs
+  from `lib.rs` `setup()`; until M2.5 adds the auto-capture setting it is always on.

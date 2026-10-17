@@ -18,6 +18,17 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let pool = tauri::async_runtime::block_on(db::init_pool(&handle))?;
+            let telemetry_source = match telemetry::replay::from_env()? {
+                Some((replay, every)) => telemetry::runner::Source::Replay(replay, every),
+                None => telemetry::runner::Source::Live,
+            };
+            app.manage(telemetry::runner::TelemetryStatus::default());
+            // Auto-capture is always on for now; M2.5 puts the setting in front of this.
+            tauri::async_runtime::spawn(telemetry::runner::run(
+                handle.clone(),
+                pool.clone(),
+                telemetry_source,
+            ));
             app.manage(db::AppState { pool });
             create_main_window(app)?;
             Ok(())
@@ -34,6 +45,7 @@ pub fn run() {
             commands::jobs::delete_job,
             commands::trucks::list_trucks,
             commands::trucks::get_truck,
+            telemetry::runner::get_telemetry_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
