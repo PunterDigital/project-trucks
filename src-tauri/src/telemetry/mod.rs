@@ -4,6 +4,7 @@
 //! state machine can be tested anywhere.
 
 pub mod reader;
+pub mod state_machine;
 pub mod struct_v;
 
 pub use reader::{ReaderError, TelemetryReader};
