@@ -71,4 +71,9 @@ data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
   `PROJECTTRUCKS_TELEMETRY_REPLAY_INTERVAL_MS`) and the background task replays recorded snapshots
   instead of reading ETS2 (`src-tauri/src/telemetry/replay.rs`, `e2e/telemetry.spec.ts`). Each sample's
   `t` is virtual seconds, so a fixture can cross the 5 minute idle timeout in one step. The task runs
-  from `lib.rs` `setup()`; until M2.5 adds the auto-capture setting it is always on.
+  from `lib.rs` `setup()` and only polls (or replays) while the `auto_capture` setting is on (default off, a
+  `watch` channel in `settings.rs`): E2E specs that need a replay switch it on in Settings first. Turning it off
+  resets the pipeline, so a drive in progress is dropped.
+- Settings live in the `settings` key/value table (`src-tauri/src/settings.rs`); the ETS2 folder is found
+  through Steam (registry `SteamPath`, `libraryfolders.vdf`, `appmanifest_227300.acf`). The frontend keeps them
+  in `src/lib/settings.ts`; `formatKm` follows the km/mi setting (stored values stay km).

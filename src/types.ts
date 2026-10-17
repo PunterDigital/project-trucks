@@ -150,3 +150,18 @@ export interface DbPing {
   ok: boolean;
   message: string;
 }
+
+// --- Settings ------------------------------------------------------------
+
+export interface Settings {
+  autoCapture: boolean;
+  ets2InstallPath: string | null;
+  units: "km" | "mi";
+}
+
+/** Fields to change; leave one out to keep it. An empty path clears it. */
+export interface SettingsPatch {
+  autoCapture?: boolean;
+  ets2InstallPath?: string;
+  units?: "km" | "mi";
+}

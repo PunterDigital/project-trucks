@@ -16,6 +16,8 @@ import type {
   NewSession,
   SessionFilter,
   SessionsPage,
+  Settings,
+  SettingsPatch,
   Truck,
 } from "@/types";
 import type { TelemetryStatus } from "@/lib/useTelemetryEvents";
@@ -26,6 +28,14 @@ export const api = {
 
   // -- Telemetry ----
   getTelemetryStatus: () => invoke<TelemetryStatus>("get_telemetry_status"),
+
+  // -- Settings ----
+  getSettings: () => invoke<Settings>("get_settings"),
+
+  updateSettings: (patch: SettingsPatch) =>
+    invoke<Settings>("update_settings", { patch }),
+
+  detectEts2: () => invoke<string | null>("detect_ets2"),
 
   // -- Sessions ----
   createSession: (input: NewSession) =>

@@ -11,6 +11,7 @@ use std::time::Duration;
 use chrono::{NaiveDateTime, Utc};
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::sync::watch;
 
 use super::pipeline::{Created, Pipeline};
 use super::reader::TelemetryReader;
@@ -54,7 +55,16 @@ pub fn status_name(connected: bool, state: DrivingState) -> &'static str {
 }
 
 /// Run until the app exits (live) or the fixture is used up (replay).
-pub async fn run(app: AppHandle, pool: SqlitePool, source: Source) {
+///
+/// `enabled` is the auto-capture setting. While it is false nothing is read and the status is
+/// `not_connected`. Turning it off drops a live session in progress (the pipeline starts over), so
+/// a drive resumed later is not stitched to the old one; a replay just pauses.
+pub async fn run(
+    app: AppHandle,
+    pool: SqlitePool,
+    source: Source,
+    mut enabled: watch::Receiver<bool>,
+) {
     let mut pipeline = Pipeline::default();
     match source {
         Source::Live => {
@@ -62,7 +72,25 @@ pub async fn run(app: AppHandle, pool: SqlitePool, source: Source) {
             let mut interval = tokio::time::interval(POLL_INTERVAL);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
-                interval.tick().await;
+                if !*enabled.borrow_and_update() {
+                    reader = None;
+                    pipeline = Pipeline::default();
+                    set_status(&app, STATUS_NOT_CONNECTED);
+                    if enabled.changed().await.is_err() {
+                        return;
+                    }
+                    interval.reset();
+                    continue;
+                }
+                tokio::select! {
+                    _ = interval.tick() => {}
+                    changed = enabled.changed() => {
+                        if changed.is_err() {
+                            return;
+                        }
+                        continue;
+                    }
+                }
                 if reader.is_none() {
                     reader = TelemetryReader::open_named(MMF_NAME, Duration::ZERO).ok();
                 }
@@ -92,15 +120,29 @@ pub async fn run(app: AppHandle, pool: SqlitePool, source: Source) {
                 samples = replay.samples.len(),
                 "replaying telemetry fixture"
             );
-            let start = Utc::now().naive_utc();
             let mut interval = tokio::time::interval(every);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut started = None;
             for sample in &replay.samples {
+                while !*enabled.borrow_and_update() {
+                    set_status(&app, STATUS_NOT_CONNECTED);
+                    if enabled.changed().await.is_err() {
+                        return;
+                    }
+                    interval.reset();
+                }
+                let start = *started.get_or_insert_with(|| Utc::now().naive_utc());
                 interval.tick().await;
                 let at = start + chrono::Duration::milliseconds((sample.t * 1000.0) as i64);
                 tick(&app, &pool, &mut pipeline, at, sample.snapshot.as_ref()).await;
             }
             tracing::info!("telemetry replay finished");
+            // Stay around so switching auto-capture off still resets the status.
+            while enabled.changed().await.is_ok() {
+                if !*enabled.borrow_and_update() {
+                    set_status(&app, STATUS_NOT_CONNECTED);
+                }
+            }
         }
     }
 }
