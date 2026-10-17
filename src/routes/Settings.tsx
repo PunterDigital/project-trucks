@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
 import { updateSettings, useSettings } from "@/lib/settings";
 import { useTelemetryStatus, type TelemetryStatus } from "@/lib/useTelemetryEvents";
-import type { SettingsPatch } from "@/types";
+import type { PluginState, PluginStatus, SettingsPatch } from "@/types";
 
 const STATUS_LABEL: Record<TelemetryStatus, string> = {
   not_connected: "Not connected",
@@ -18,13 +18,64 @@ const STATUS_LABEL: Record<TelemetryStatus, string> = {
   delivery: "Connected, on a delivery",
 };
 
+const PLUGIN_LABEL: Record<PluginState, string> = {
+  noFolder: "Set the ETS2 folder first",
+  badFolder: "Not an ETS2 folder",
+  notInstalled: "Not installed",
+  outdated: "Outdated",
+  installed: "Installed",
+};
+
+/** What the plugin check found for one folder; `error` when the check itself failed. */
+interface PluginCheck {
+  folder: string | null;
+  status: PluginStatus | null;
+  error: string | null;
+}
+
 export function Settings() {
   const settings = useSettings();
   const status = useTelemetryStatus();
   // The path field is edited freely and saved on blur or Enter; `null` = showing the saved value.
   const [draftPath, setDraftPath] = useState<string | null>(null);
 
+  const folder = settings?.ets2InstallPath ?? null;
+  const [check, setCheck] = useState<PluginCheck | null>(null);
+  const [installing, setInstalling] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .telemetryPluginStatus()
+      .then((status) => !cancelled && setCheck({ folder, status, error: null }))
+      .catch((e) => !cancelled && setCheck({ folder, status: null, error: String(e) }));
+    return () => {
+      cancelled = true;
+    };
+  }, [folder]);
+
   if (!settings) return null;
+
+  // A result for a folder that is no longer the saved one is stale: show "Checking…" instead.
+  const current = check && check.folder === folder ? check : null;
+  const pluginState = current?.status?.state;
+  const canInstall =
+    !installing &&
+    (pluginState === "notInstalled" || pluginState === "outdated");
+
+  const installPlugin = async () => {
+    setInstalling(true);
+    try {
+      const status = await api.installTelemetryPlugin();
+      setCheck({ folder, status, error: null });
+      toast.success("Telemetry plugin installed. Restart ETS2 if it is running.");
+    } catch (e) {
+      setCheck({ folder, status: null, error: String(e) });
+      toast.error(String(e));
+    } finally {
+      setInstalling(false);
+    }
+  };
 
   const save = async (patch: SettingsPatch) => {
     try {
@@ -103,6 +154,34 @@ export function Settings() {
         </div>
         <p className="text-sm text-muted-foreground">
           Found through Steam by default. The telemetry plugin goes into this folder.
+        </p>
+      </section>
+
+      <section className="space-y-3" aria-labelledby="plugin-heading">
+        <h3 id="plugin-heading" className="text-lg font-medium">
+          Telemetry plugin
+        </h3>
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-muted-foreground">Status:</span>
+          <Badge variant="outline" data-testid="plugin-badge">
+            {current
+              ? current.error
+                ? "Could not check"
+                : PLUGIN_LABEL[current.status!.state]
+              : "Checking…"}
+          </Badge>
+          <Button type="button" variant="outline" disabled={!canInstall} onClick={installPlugin}>
+            {pluginState === "outdated" ? "Update plugin" : "Install plugin"}
+          </Button>
+        </div>
+        {current?.error && (
+          <p className="text-sm text-destructive" role="alert" data-testid="plugin-error">
+            {current.error}
+          </p>
+        )}
+        <p className="text-sm text-muted-foreground">
+          Copies the bundled plugin into the ETS2 folder (bin/win_x64/plugins). A different plugin
+          already there is kept as a .bak file. Restart the game afterwards.
         </p>
       </section>
 

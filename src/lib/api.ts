@@ -15,6 +15,7 @@ import type {
   NewJob,
   NewSession,
   SessionFilter,
+  PluginStatus,
   SessionsPage,
   Settings,
   SettingsPatch,
@@ -36,6 +37,10 @@ export const api = {
     invoke<Settings>("update_settings", { patch }),
 
   detectEts2: () => invoke<string | null>("detect_ets2"),
+
+  telemetryPluginStatus: () => invoke<PluginStatus>("telemetry_plugin_status"),
+
+  installTelemetryPlugin: () => invoke<PluginStatus>("install_telemetry_plugin"),
 
   // -- Sessions ----
   createSession: (input: NewSession) =>

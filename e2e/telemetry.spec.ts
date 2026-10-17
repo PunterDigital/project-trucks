@@ -1,3 +1,8 @@
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { expect, test } from "./fixtures";
 
 test.skip(process.platform !== "win32", "WebView2 (Windows) is the only webview with CDP");
@@ -164,5 +169,64 @@ test.describe("settings", () => {
       "aria-pressed",
       "false",
     );
+  });
+
+  test("the plugin installer reports status and installs into a fake ETS2 folder", async ({
+    page,
+  }) => {
+    const game = mkdtempSync(path.join(tmpdir(), "projecttrucks-fake-ets2-"));
+    try {
+      const bin = path.join(game, "bin", "win_x64");
+      mkdirSync(bin, { recursive: true });
+      const notEts2 = mkdtempSync(path.join(tmpdir(), "projecttrucks-not-ets2-"));
+
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      const folder = page.getByLabel("ETS2 install folder");
+      const badge = page.getByTestId("plugin-badge");
+      const install = page.getByRole("button", { name: /(Install|Update) plugin/ });
+
+      // A folder without the game's exe is rejected.
+      await folder.fill(notEts2);
+      await folder.blur();
+      await expect(badge).toHaveText("Not an ETS2 folder");
+      await expect(install).toBeDisabled();
+      rmSync(notEts2, { recursive: true, force: true });
+
+      // The exe makes it look like ETS2: not installed yet.
+      writeFileSync(path.join(bin, "eurotrucks2.exe"), "exe");
+      await folder.fill(game);
+      await folder.blur();
+      await expect(badge).toHaveText("Not installed");
+      await install.click();
+      await expect(badge).toHaveText("Installed");
+      await expect(install).toBeDisabled();
+
+      const dll = path.join(bin, "plugins", "ets2-telemetry-server.dll");
+      const bundled = path.join(
+        import.meta.dirname,
+        "..",
+        "assets",
+        "telemetry-plugin",
+        "win_x64",
+        "ets2-telemetry-server.dll",
+      );
+      const sha = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex");
+      expect(sha(dll)).toBe(sha(bundled));
+
+      // A different DLL is outdated; updating keeps it as .bak.
+      writeFileSync(dll, "some other plugin");
+      await folder.fill(game + "\\");
+      await folder.blur();
+      await folder.fill(game);
+      await folder.blur();
+      await expect(badge).toHaveText("Outdated");
+      await page.getByRole("button", { name: "Update plugin" }).click();
+      await expect(badge).toHaveText("Installed");
+      expect(sha(dll)).toBe(sha(bundled));
+      expect(readFileSync(dll + ".bak", "utf8")).toBe("some other plugin");
+      expect(existsSync(dll + ".bak")).toBe(true);
+    } finally {
+      rmSync(game, { recursive: true, force: true });
+    }
   });
 });
