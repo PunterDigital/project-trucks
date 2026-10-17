@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   formatCurrency,
@@ -6,6 +6,7 @@ import {
   formatDuration,
   formatKm,
   formatRelativeDate,
+  setUnits,
 } from "./format";
 
 describe("formatKm", () => {
@@ -16,6 +17,18 @@ describe("formatKm", () => {
   it("drops a trailing .0", () => {
     expect(formatKm(812)).toBe("812 km");
     expect(formatKm(0)).toBe("0 km");
+  });
+});
+
+describe("formatKm with the miles setting", () => {
+  afterEach(() => setUnits("km"));
+
+  it("converts the stored kilometres for display", () => {
+    setUnits("mi");
+    expect(formatKm(100)).toBe("62.1 mi");
+    expect(formatKm(0)).toBe("0 mi");
+    setUnits("km");
+    expect(formatKm(100)).toBe("100 km");
   });
 });
 

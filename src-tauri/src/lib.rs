@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod db;
+pub mod settings;
 pub mod telemetry;
 
 use tauri::Manager;
@@ -23,11 +24,15 @@ pub fn run() {
                 None => telemetry::runner::Source::Live,
             };
             app.manage(telemetry::runner::TelemetryStatus::default());
-            // Auto-capture is always on for now; M2.5 puts the setting in front of this.
+            tauri::async_runtime::block_on(settings::detect_on_first_run(&pool))?;
+            let auto_capture = tauri::async_runtime::block_on(settings::load(&pool))?.auto_capture;
+            let (capture_tx, capture_rx) = tokio::sync::watch::channel(auto_capture);
+            app.manage(settings::AutoCapture(capture_tx));
             tauri::async_runtime::spawn(telemetry::runner::run(
                 handle.clone(),
                 pool.clone(),
                 telemetry_source,
+                capture_rx,
             ));
             app.manage(db::AppState { pool });
             create_main_window(app)?;
@@ -46,6 +51,9 @@ pub fn run() {
             commands::trucks::list_trucks,
             commands::trucks::get_truck,
             telemetry::runner::get_telemetry_status,
+            settings::get_settings,
+            settings::update_settings,
+            settings::detect_ets2,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

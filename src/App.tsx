@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { loadSettings, useSettings } from "@/lib/settings";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
 import { Toaster } from "@/components/ui/sonner";
@@ -11,6 +13,14 @@ import { TruckDetail } from "@/routes/TruckDetail";
 import { Settings } from "@/routes/Settings";
 
 function App() {
+  // Subscribing here re-renders every page when the units setting changes.
+  useSettings();
+  useEffect(() => {
+    loadSettings().catch(() => {
+      // No backend (plain browser): the defaults stay.
+    });
+  }, []);
+
   return (
     <div className="flex h-screen bg-background text-foreground">
       <Sidebar />

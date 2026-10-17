@@ -1,6 +1,4 @@
-// Domain formatters. All use a fixed `en-GB` locale for now — when the
-// Settings page wires up the imperial/metric toggle in M2, this is where we
-// switch on it.
+// Domain formatters. All use a fixed `en-GB` locale; distances follow the km/mi setting.
 
 const LOCALE = "en-GB";
 
@@ -20,9 +18,28 @@ const dateFormatter = new Intl.DateTimeFormat(LOCALE, {
 
 const relativeFormatter = new Intl.RelativeTimeFormat(LOCALE, { numeric: "auto" });
 
-/** "1,234.5 km" — drops trailing .0 thanks to maximumFractionDigits. */
+export type Units = "km" | "mi";
+
+const KM_PER_MILE = 1.609344;
+
+let units: Units = "km";
+
+/**
+ * Switch the distance unit `formatKm` shows. The Settings store calls this; the app root re-renders
+ * on a settings change, so every page picks it up.
+ */
+export function setUnits(next: Units): void {
+  units = next;
+}
+
+/**
+ * "1,234.5 km" — drops trailing .0 thanks to maximumFractionDigits. The input is always kilometres
+ * (what is stored); with the miles setting it is converted for display ("767.2 mi").
+ */
 export function formatKm(km: number): string {
-  return `${kmFormatter.format(km)} km`;
+  return units === "mi"
+    ? `${kmFormatter.format(km / KM_PER_MILE)} mi`
+    : `${kmFormatter.format(km)} km`;
 }
 
 /** "4,250 €" — ETS2's in-game currency is displayed with the euro sign. */
