@@ -10,7 +10,7 @@ use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::db::models::{Job, JobFilter, JobPatch, JobsPage, NewJob};
+use crate::db::models::{Job, JobFilter, JobPatch, JobSource, JobsPage, NewJob};
 use crate::db::rollups::recompute_truck;
 use crate::db::AppState;
 
@@ -37,8 +37,13 @@ pub async fn insert_job(pool: &SqlitePool, input: NewJob) -> Result<Job> {
 pub async fn insert_job_row(conn: &mut SqliteConnection, input: NewJob) -> Result<Job> {
     let id = format!("job_{}", Uuid::new_v4().simple());
     let avg_speed_kmh = compute_avg_speed(input.distance_km, input.duration_sec);
-    let flagged = false;
-    let flag_reason: Option<String> = None;
+    // Manual entries are the user's own numbers; only recorded deliveries get sanity-checked.
+    let flag_reason = if input.source == JobSource::Telemetry {
+        sanity_flag(input.distance_km, input.duration_sec, avg_speed_kmh)
+    } else {
+        None
+    };
+    let flagged = flag_reason.is_some();
 
     sqlx::query(
         "INSERT INTO jobs
@@ -111,6 +116,29 @@ pub async fn insert_job_row(conn: &mut SqliteConnection, input: NewJob) -> Resul
         flag_reason,
         notes: input.notes,
     })
+}
+
+/// A recorded delivery above this average speed probably had a teleport or a bad odometer reading.
+pub const MAX_PLAUSIBLE_AVG_KMH: f64 = 150.0;
+/// A recorded delivery shorter than this is probably a job picked up and dropped, or a glitch.
+pub const MIN_PLAUSIBLE_KM: f64 = 1.0;
+
+/// Reason a recorded delivery looks suspicious, if it does.
+pub fn sanity_flag(distance_km: f64, duration_sec: i64, avg_speed_kmh: f64) -> Option<String> {
+    let mut reasons = Vec::new();
+    if distance_km < MIN_PLAUSIBLE_KM {
+        reasons.push(format!("Distance under {MIN_PLAUSIBLE_KM:.0} km"));
+    }
+    if duration_sec > 0 && avg_speed_kmh > MAX_PLAUSIBLE_AVG_KMH {
+        reasons.push(format!(
+            "Average speed over {MAX_PLAUSIBLE_AVG_KMH:.0} km/h"
+        ));
+    }
+    if reasons.is_empty() {
+        None
+    } else {
+        Some(reasons.join("; "))
+    }
 }
 
 fn compute_avg_speed(distance_km: f64, duration_sec: i64) -> f64 {
@@ -340,6 +368,43 @@ mod tests {
     fn avg_speed_handles_zero_duration() {
         assert_eq!(compute_avg_speed(100.0, 0), 0.0);
         assert_eq!(compute_avg_speed(100.0, -1), 0.0);
+    }
+
+    #[test]
+    fn sanity_flag_catches_fast_and_tiny_deliveries() {
+        assert_eq!(sanity_flag(290.0, 14_400, 72.5), None);
+        assert_eq!(
+            sanity_flag(400.0, 7_200, 200.0).as_deref(),
+            Some("Average speed over 150 km/h")
+        );
+        assert_eq!(
+            sanity_flag(0.4, 600, 2.4).as_deref(),
+            Some("Distance under 1 km")
+        );
+        assert_eq!(
+            sanity_flag(0.5, 10, 180.0).as_deref(),
+            Some("Distance under 1 km; Average speed over 150 km/h")
+        );
+    }
+
+    #[tokio::test]
+    async fn only_telemetry_jobs_are_sanity_flagged() {
+        let pool = test_pool().await;
+        let mut fast = sample_job(None);
+        fast.distance_km = 500.0;
+        fast.duration_sec = 7_200;
+        fast.source = JobSource::Telemetry;
+        let flagged = insert_job(&pool, fast.clone()).await.unwrap();
+        assert!(flagged.flagged);
+        assert_eq!(
+            flagged.flag_reason.as_deref(),
+            Some("Average speed over 150 km/h")
+        );
+
+        fast.source = JobSource::Manual;
+        let manual = insert_job(&pool, fast).await.unwrap();
+        assert!(!manual.flagged);
+        assert_eq!(manual.flag_reason, None);
     }
 
     #[test]

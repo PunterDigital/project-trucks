@@ -82,3 +82,7 @@ data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
   `<ets2>/bin/win_x64/plugins`. A folder "looks like ETS2" when `bin/win_x64/eurotrucks2.exe` exists, which is how the
   E2E builds a fake game folder in a temp dir. Installed/outdated is a SHA-256 comparison; a different DLL is kept as `.bak`.
 - E2E teardown can flake on Windows: `rmSync` of the data dir fails while WebView2 still holds a file. A rerun passes.
+- Recorded (telemetry) jobs are sanity-checked in `insert_job_row` (`sanity_flag` in `commands/jobs.rs`): average speed over
+  150 km/h or distance under 1 km sets `flagged` + `flag_reason`; manual entries are never auto-flagged. The Jobs list and
+  job page show a "Flagged" badge. `e2e/scenarios.spec.ts` replays a whole shift (cancel, on-time, ferry teleport, alt-tab gap,
+  fast delivery) with a `Shift` builder; the first 1.2 km of a job are driven before the job is seen, so distances are 10.8 not 12.
