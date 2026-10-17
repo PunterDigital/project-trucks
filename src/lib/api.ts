@@ -18,10 +18,14 @@ import type {
   SessionsPage,
   Truck,
 } from "@/types";
+import type { TelemetryStatus } from "@/lib/useTelemetryEvents";
 
 export const api = {
   // -- Health / misc ----
   dbPing: () => invoke<DbPing>("db_ping"),
+
+  // -- Telemetry ----
+  getTelemetryStatus: () => invoke<TelemetryStatus>("get_telemetry_status"),
 
   // -- Sessions ----
   createSession: (input: NewSession) =>

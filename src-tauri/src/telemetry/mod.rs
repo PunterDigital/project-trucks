@@ -3,7 +3,10 @@
 //! Windows-only at runtime (the plugin and the game are), but the types compile everywhere so the
 //! state machine can be tested anywhere.
 
+pub mod pipeline;
 pub mod reader;
+pub mod replay;
+pub mod runner;
 pub mod state_machine;
 pub mod struct_v;
 
@@ -14,7 +17,8 @@ use chrono::NaiveDateTime;
 
 /// One reading of the game, in units the rest of the app wants (km/h, km, `chrono` times,
 /// `Option` instead of empty strings).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TelemetrySnapshot {
     /// Plugin tick counter from the frame header (increases while the game runs).
     pub tick: u32,
@@ -27,7 +31,8 @@ pub struct TelemetrySnapshot {
     pub job: Option<JobSnapshot>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TruckSnapshot {
     pub make: Option<String>,
     pub make_id: Option<String>,
@@ -47,7 +52,8 @@ pub struct TruckSnapshot {
     pub wear_trailer: f32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct JobSnapshot {
     pub income: i32,
     /// In-game deadline of the delivery window.

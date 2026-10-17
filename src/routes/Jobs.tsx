@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 
 import { api } from "@/lib/api";
+import { useCaptureRefresh } from "@/lib/useTelemetryEvents";
 import {
   formatCurrency,
   formatDate,
@@ -98,6 +99,7 @@ export function Jobs() {
     return f;
   }, [search, status, range, page]);
   const requestKey = JSON.stringify(filter);
+  const captured = useCaptureRefresh();
 
   useEffect(() => {
     let cancelled = false;
@@ -114,7 +116,7 @@ export function Jobs() {
     return () => {
       cancelled = true;
     };
-  }, [filter, requestKey]);
+  }, [filter, requestKey, captured]);
 
   const loading = settled?.key !== requestKey;
   const error = loading ? null : (settled?.error ?? null);

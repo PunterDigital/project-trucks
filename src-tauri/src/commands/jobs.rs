@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result};
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 use tauri::State;
 use uuid::Uuid;
 
@@ -21,6 +21,20 @@ const MAX_LIMIT: i64 = 200;
 /// distance/duration, then refreshes the truck rollup. Returns the inserted
 /// row.
 pub async fn insert_job(pool: &SqlitePool, input: NewJob) -> Result<Job> {
+    let job = {
+        // Release the connection before the rollup asks for one (small pools would deadlock).
+        let mut conn = pool.acquire().await.context("acquiring connection")?;
+        insert_job_row(&mut conn, input).await?
+    };
+    if let (Some(make), Some(model)) = (&job.truck_make, &job.truck_model) {
+        recompute_truck(pool, make, model).await?;
+    }
+    Ok(job)
+}
+
+/// Insert the job row only, on a caller-supplied connection (or transaction). The caller
+/// refreshes the truck rollup after committing.
+pub async fn insert_job_row(conn: &mut SqliteConnection, input: NewJob) -> Result<Job> {
     let id = format!("job_{}", Uuid::new_v4().simple());
     let avg_speed_kmh = compute_avg_speed(input.distance_km, input.duration_sec);
     let flagged = false;
@@ -67,13 +81,9 @@ pub async fn insert_job(pool: &SqlitePool, input: NewJob) -> Result<Job> {
     .bind(flagged)
     .bind(&flag_reason)
     .bind(&input.notes)
-    .execute(pool)
+    .execute(&mut *conn)
     .await
     .context("inserting job")?;
-
-    if let (Some(make), Some(model)) = (&input.truck_make, &input.truck_model) {
-        recompute_truck(pool, make, model).await?;
-    }
 
     Ok(Job {
         id,

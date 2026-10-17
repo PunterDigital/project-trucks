@@ -8,7 +8,7 @@
 #![allow(dead_code)]
 
 use anyhow::{Context, Result};
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 use tauri::State;
 use uuid::Uuid;
 
@@ -22,6 +22,24 @@ const MAX_LIMIT: i64 = 200;
 /// Insert a driving session and refresh the truck rollup. Returns the inserted
 /// row. The id is generated server-side as `ses_<uuid-simple>`.
 pub async fn insert_session(pool: &SqlitePool, input: NewSession) -> Result<DrivingSession> {
+    let session = {
+        // Release the connection before the rollup asks for one (small pools would deadlock).
+        let mut conn = pool.acquire().await.context("acquiring connection")?;
+        insert_session_row(&mut conn, input).await?
+    };
+    if let (Some(make), Some(model)) = (&session.truck_make, &session.truck_model) {
+        recompute_truck(pool, make, model).await?;
+    }
+    Ok(session)
+}
+
+/// Insert the session row only, on a caller-supplied connection (or transaction), so the telemetry
+/// writer can add a session and its job atomically. The caller refreshes the truck rollup after
+/// committing.
+pub async fn insert_session_row(
+    conn: &mut SqliteConnection,
+    input: NewSession,
+) -> Result<DrivingSession> {
     let id = format!("ses_{}", Uuid::new_v4().simple());
     let distance_km = input.end_odometer - input.start_odometer;
 
@@ -41,13 +59,9 @@ pub async fn insert_session(pool: &SqlitePool, input: NewSession) -> Result<Driv
     .bind(input.started_at)
     .bind(input.ended_at)
     .bind(input.status)
-    .execute(pool)
+    .execute(&mut *conn)
     .await
     .context("inserting driving_session")?;
-
-    if let (Some(make), Some(model)) = (&input.truck_make, &input.truck_model) {
-        recompute_truck(pool, make, model).await?;
-    }
 
     Ok(DrivingSession {
         id,
