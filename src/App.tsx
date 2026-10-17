@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { loadSettings, useSettings } from "@/lib/settings";
 import { Sidebar } from "@/components/Sidebar";
 import { Header } from "@/components/Header";
+import { PluginPrompt } from "@/components/PluginPrompt";
 import { Toaster } from "@/components/ui/sonner";
 import { Dashboard } from "@/routes/Dashboard";
 import { Jobs } from "@/routes/Jobs";
@@ -26,6 +27,7 @@ function App() {
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header />
+        <PluginPrompt />
         <main className="flex-1 overflow-auto p-6">
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
