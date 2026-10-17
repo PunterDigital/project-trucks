@@ -3,8 +3,10 @@
 //! Windows-only at runtime (the plugin and the game are), but the types compile everywhere so the
 //! state machine can be tested anywhere.
 
+pub mod reader;
 pub mod struct_v;
 
+pub use reader::{ReaderError, TelemetryReader};
 pub use struct_v::{FrameError, TelemetryFrame};
 
 use chrono::NaiveDateTime;
