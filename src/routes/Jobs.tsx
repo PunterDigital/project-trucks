@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import type { DateRange } from "react-day-picker";
 
 import { DateRangePicker } from "@/components/DateRangePicker";
+import { Badge } from "@/components/ui/badge";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -243,7 +244,18 @@ export function Jobs() {
                       {formatKm(job.distanceKm)}
                     </TableCell>
                     <TableCell>
-                      <JobStatusBadge status={job.status} />
+                      <div className="flex flex-wrap items-center gap-1">
+                        <JobStatusBadge status={job.status} />
+                        {job.flagged && (
+                          <Badge
+                            data-testid="flagged-badge"
+                            title={job.flagReason ?? "Flagged"}
+                            className="border-transparent bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                          >
+                            Flagged
+                          </Badge>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-right">
                       {formatCurrency(job.declaredIncome)}
