@@ -230,3 +230,72 @@ test.describe("settings", () => {
     }
   });
 });
+
+test.describe("first-launch plugin prompt", () => {
+  const dllIn = (game: string) => path.join(game, "bin", "win_x64", "plugins", "ets2-telemetry-server.dll");
+
+  function fakeEts2(): string {
+    const game = mkdtempSync(path.join(tmpdir(), "projecttrucks-fake-ets2-"));
+    mkdirSync(path.join(game, "bin", "win_x64"), { recursive: true });
+    writeFileSync(path.join(game, "bin", "win_x64", "eurotrucks2.exe"), "exe");
+    return game;
+  }
+
+  test("suggests the plugin, installs it into a fake ETS2 folder and stays quiet afterwards", async ({
+    page,
+  }) => {
+    const game = fakeEts2();
+    try {
+      const prompt = page.getByTestId("plugin-prompt");
+      await expect(prompt).toContainText("Set up live telemetry?");
+
+      // A folder that is not ETS2 fails with a message, not a crash.
+      const notEts2 = mkdtempSync(path.join(tmpdir(), "projecttrucks-not-ets2-"));
+      await prompt.getByLabel("ETS2 folder for the plugin").fill(notEts2);
+      await prompt.getByRole("button", { name: "Install", exact: true }).click();
+      await expect(prompt.getByRole("alert")).toContainText("does not look like an ETS2 folder");
+      rmSync(notEts2, { recursive: true, force: true });
+
+      await prompt.getByLabel("ETS2 folder for the plugin").fill(game);
+      await prompt.getByRole("button", { name: "Install", exact: true }).click();
+      await expect(prompt).toBeHidden();
+      expect(existsSync(dllIn(game))).toBe(true);
+
+      // The next launch (a reload re-reads the saved settings) does not ask again.
+      await page.reload({ waitUntil: "load" });
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      await expect(page.getByTestId("plugin-badge")).toHaveText("Installed");
+      await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+      await expect(prompt).toBeHidden();
+    } finally {
+      rmSync(game, { recursive: true, force: true });
+    }
+  });
+
+  test("an outdated plugin is offered as an update; Not now is remembered", async ({ page }) => {
+    const game = fakeEts2();
+    try {
+      mkdirSync(path.dirname(dllIn(game)), { recursive: true });
+      writeFileSync(dllIn(game), "some other plugin");
+      const prompt = page.getByTestId("plugin-prompt");
+      // The saved folder holds a different DLL: the prompt offers an update.
+      await page.getByRole("link", { name: "Settings", exact: true }).click();
+      await page.getByLabel("ETS2 install folder").fill(game);
+      await page.getByLabel("ETS2 install folder").blur();
+      await expect(page.getByTestId("plugin-badge")).toHaveText("Outdated");
+      await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+      await expect(prompt).toContainText("Update live telemetry?");
+      await prompt.getByRole("button", { name: "Not now" }).click();
+      await expect(prompt).toBeHidden();
+
+      await page.reload({ waitUntil: "load" });
+      await page.getByRole("link", { name: "Jobs", exact: true }).click();
+      await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+      await page.waitForTimeout(500);
+      await expect(prompt).toBeHidden();
+      expect(readFileSync(dllIn(game), "utf8")).toBe("some other plugin");
+    } finally {
+      rmSync(game, { recursive: true, force: true });
+    }
+  });
+});

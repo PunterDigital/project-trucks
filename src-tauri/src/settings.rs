@@ -16,6 +16,7 @@ use crate::db::AppState;
 const KEY_AUTO_CAPTURE: &str = "auto_capture";
 const KEY_ETS2_PATH: &str = "ets2_install_path";
 const KEY_UNITS: &str = "units";
+const KEY_PLUGIN_PROMPT: &str = "plugin_prompt_dismissed";
 
 /// Steam app id of Euro Truck Simulator 2.
 const ETS2_APP_ID: &str = "227300";
@@ -30,6 +31,9 @@ pub struct Settings {
     pub ets2_install_path: Option<String>,
     /// `"km"` or `"mi"`.
     pub units: String,
+    /// SHA-256 of the bundled plugin the user last said "Not now" to; the first-launch prompt
+    /// stays quiet until the app ships a different plugin.
+    pub plugin_prompt_dismissed: Option<String>,
 }
 
 /// Fields to change; absent ones are left alone. An empty `ets2_install_path` clears it.
@@ -39,6 +43,7 @@ pub struct SettingsPatch {
     pub auto_capture: Option<bool>,
     pub ets2_install_path: Option<String>,
     pub units: Option<String>,
+    pub plugin_prompt_dismissed: Option<String>,
 }
 
 async fn get(pool: &SqlitePool, key: &str) -> Result<Option<String>, sqlx::Error> {
@@ -70,6 +75,9 @@ pub async fn load(pool: &SqlitePool) -> Result<Settings, sqlx::Error> {
             Some("mi") => "mi".to_string(),
             _ => "km".to_string(),
         },
+        plugin_prompt_dismissed: get(pool, KEY_PLUGIN_PROMPT)
+            .await?
+            .filter(|p| !p.is_empty()),
     })
 }
 
@@ -100,6 +108,9 @@ pub async fn apply(pool: &SqlitePool, patch: SettingsPatch) -> Result<Settings, 
     }
     if let Some(units) = &patch.units {
         put(pool, KEY_UNITS, units).await.map_err(io)?;
+    }
+    if let Some(sha) = &patch.plugin_prompt_dismissed {
+        put(pool, KEY_PLUGIN_PROMPT, sha.trim()).await.map_err(io)?;
     }
     load(pool).await.map_err(io)
 }
@@ -292,6 +303,7 @@ mod tests {
         assert!(!defaults.auto_capture);
         assert_eq!(defaults.ets2_install_path, None);
         assert_eq!(defaults.units, "km");
+        assert_eq!(defaults.plugin_prompt_dismissed, None);
 
         let saved = apply(
             &pool,
@@ -299,10 +311,12 @@ mod tests {
                 auto_capture: Some(true),
                 ets2_install_path: Some(r" D:\Games\ETS2 ".into()),
                 units: Some("mi".into()),
+                plugin_prompt_dismissed: Some("abc123".into()),
             },
         )
         .await
         .unwrap();
+        assert_eq!(saved.plugin_prompt_dismissed.as_deref(), Some("abc123"));
         assert!(saved.auto_capture);
         assert_eq!(saved.ets2_install_path.as_deref(), Some(r"D:\Games\ETS2"));
         assert_eq!(saved.units, "mi");
@@ -319,6 +333,7 @@ mod tests {
         .unwrap();
         assert!(cleared.auto_capture);
         assert_eq!(cleared.ets2_install_path, None);
+        assert_eq!(cleared.plugin_prompt_dismissed.as_deref(), Some("abc123"));
 
         assert!(apply(
             &pool,

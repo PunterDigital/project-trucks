@@ -157,6 +157,7 @@ export interface Settings {
   autoCapture: boolean;
   ets2InstallPath: string | null;
   units: "km" | "mi";
+  pluginPromptDismissed: string | null;
 }
 
 export type PluginState = "noFolder" | "badFolder" | "notInstalled" | "outdated" | "installed";
@@ -164,6 +165,7 @@ export type PluginState = "noFolder" | "badFolder" | "notInstalled" | "outdated"
 export interface PluginStatus {
   state: PluginState;
   pluginPath: string | null;
+  bundledSha: string | null;
 }
 
 /** Fields to change; leave one out to keep it. An empty path clears it. */
@@ -171,4 +173,5 @@ export interface SettingsPatch {
   autoCapture?: boolean;
   ets2InstallPath?: string;
   units?: "km" | "mi";
+  pluginPromptDismissed?: string;
 }

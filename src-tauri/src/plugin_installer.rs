@@ -39,6 +39,8 @@ pub struct PluginStatus {
     pub state: PluginState,
     /// Where the DLL goes (or is), when the folder is usable.
     pub plugin_path: Option<String>,
+    /// SHA-256 (hex) of the plugin this app ships; the first-launch prompt is dismissed per value.
+    pub bundled_sha: Option<String>,
 }
 
 fn plugins_dir(game: &Path) -> PathBuf {
@@ -53,11 +55,18 @@ fn sha256_file(path: &Path) -> std::io::Result<[u8; 32]> {
     Ok(Sha256::digest(std::fs::read(path)?).into())
 }
 
+fn sha_hex(bundled: &Path) -> Option<String> {
+    let hash = sha256_file(bundled).ok()?;
+    Some(hash.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 pub fn status_of(game: Option<&str>, bundled: &Path) -> Result<PluginStatus, String> {
+    let bundled_sha = sha_hex(bundled);
     let Some(game) = game.map(str::trim).filter(|g| !g.is_empty()) else {
         return Ok(PluginStatus {
             state: PluginState::NoFolder,
             plugin_path: None,
+            bundled_sha,
         });
     };
     let game = Path::new(game);
@@ -65,6 +74,7 @@ pub fn status_of(game: Option<&str>, bundled: &Path) -> Result<PluginStatus, Str
         return Ok(PluginStatus {
             state: PluginState::BadFolder,
             plugin_path: None,
+            bundled_sha,
         });
     }
     let target = plugins_dir(game).join(DLL_NAME);
@@ -88,6 +98,7 @@ pub fn status_of(game: Option<&str>, bundled: &Path) -> Result<PluginStatus, Str
     Ok(PluginStatus {
         state,
         plugin_path: Some(target.to_string_lossy().into_owned()),
+        bundled_sha,
     })
 }
 

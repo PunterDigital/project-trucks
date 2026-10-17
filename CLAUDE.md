@@ -86,3 +86,8 @@ data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
   150 km/h or distance under 1 km sets `flagged` + `flag_reason`; manual entries are never auto-flagged. The Jobs list and
   job page show a "Flagged" badge. `e2e/scenarios.spec.ts` replays a whole shift (cancel, on-time, ferry teleport, alt-tab gap,
   fast delivery) with a `Shift` builder; the first 1.2 km of a job are driven before the job is seen, so distances are 10.8 not 12.
+- First-launch prompt (`src/components/PluginPrompt.tsx`, shown under the header except on `/settings`): when the plugin
+  is missing or outdated it offers Install/Update with the saved ETS2 folder. "Not now" stores the bundled DLL's SHA-256
+  (`plugin_prompt_dismissed` setting, `PluginStatus.bundledSha`), so it only returns when the app ships a different plugin.
+  The other E2E specs run with no ETS2 folder, so the prompt is on screen in them; don't give it a button named like
+  "Install plugin" (`telemetry.spec.ts` selects that on the Settings page).
