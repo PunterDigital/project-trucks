@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod db;
+pub mod plugin_installer;
 pub mod settings;
 pub mod telemetry;
 
@@ -54,6 +55,8 @@ pub fn run() {
             settings::get_settings,
             settings::update_settings,
             settings::detect_ets2,
+            plugin_installer::telemetry_plugin_status,
+            plugin_installer::install_telemetry_plugin,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

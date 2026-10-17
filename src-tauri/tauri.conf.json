@@ -37,6 +37,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../assets/telemetry-plugin/win_x64/ets2-telemetry-server.dll": "telemetry-plugin/ets2-telemetry-server.dll"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

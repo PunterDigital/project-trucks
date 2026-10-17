@@ -159,6 +159,13 @@ export interface Settings {
   units: "km" | "mi";
 }
 
+export type PluginState = "noFolder" | "badFolder" | "notInstalled" | "outdated" | "installed";
+
+export interface PluginStatus {
+  state: PluginState;
+  pluginPath: string | null;
+}
+
 /** Fields to change; leave one out to keep it. An empty path clears it. */
 export interface SettingsPatch {
   autoCapture?: boolean;

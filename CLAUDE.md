@@ -77,3 +77,8 @@ data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
 - Settings live in the `settings` key/value table (`src-tauri/src/settings.rs`); the ETS2 folder is found
   through Steam (registry `SteamPath`, `libraryfolders.vdf`, `appmanifest_227300.acf`). The frontend keeps them
   in `src/lib/settings.ts`; `formatKm` follows the km/mi setting (stored values stay km).
+- The telemetry plugin installer (`src-tauri/src/plugin_installer.rs`) copies the bundled x64 DLL, a Tauri resource
+  (`bundle.resources`, copied next to the exe by the build script, so `--no-bundle` release binaries have it too), into
+  `<ets2>/bin/win_x64/plugins`. A folder "looks like ETS2" when `bin/win_x64/eurotrucks2.exe` exists, which is how the
+  E2E builds a fake game folder in a temp dir. Installed/outdated is a SHA-256 comparison; a different DLL is kept as `.bak`.
+- E2E teardown can flake on Windows: `rmSync` of the data dir fails while WebView2 still holds a file. A rerun passes.
