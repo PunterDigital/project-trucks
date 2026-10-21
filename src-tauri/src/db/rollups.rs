@@ -24,7 +24,7 @@ pub fn truck_id(make: &str, model: &str) -> String {
     hasher.update(b"|");
     hasher.update(model.as_bytes());
     let bytes = hasher.finalize();
-    let hex = format!("{:x}", bytes);
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     hex[..16].to_string()
 }
 

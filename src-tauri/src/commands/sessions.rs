@@ -113,7 +113,7 @@ pub async fn fetch_sessions(pool: &SqlitePool, filter: SessionFilter) -> Result<
     })
 }
 
-fn apply_session_filters<'q>(qb: &mut QueryBuilder<'q, Sqlite>, filter: &'q SessionFilter) {
+fn apply_session_filters(qb: &mut QueryBuilder<Sqlite>, filter: &SessionFilter) {
     if let Some(kind) = filter.kind {
         qb.push(" AND kind = ");
         qb.push_bind(kind);
