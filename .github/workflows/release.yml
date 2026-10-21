@@ -11,14 +11,25 @@ jobs:
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
+    outputs:
+      body: ${{ steps.release.outputs.body }}
     steps:
       - name: Create release with notes from merged PRs
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
             gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" \
               --title "ProjectTrucks $GITHUB_REF_NAME" --generate-notes --verify-tag
+          # tauri-action v1 rewrites the name and body of an existing release with
+          # its own inputs, so hand the generated notes back to it (see the build job).
+          delim="release-notes-$RANDOM$RANDOM"
+          {
+            echo "body<<$delim"
+            gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --json body -q .body
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
 
   # Windows only: ETS2 telemetry needs Windows, so there is no macOS build.
   build:
@@ -26,11 +37,11 @@ jobs:
     needs: create-release
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -39,12 +50,13 @@ jobs:
         with:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
-      - uses: tauri-apps/tauri-action@v0
+      - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ github.token }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: ProjectTrucks ${{ github.ref_name }}
+          releaseBody: ${{ needs.create-release.outputs.body }}
           releaseDraft: false
           prerelease: false
 

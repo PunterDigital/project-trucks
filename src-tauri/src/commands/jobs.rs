@@ -181,10 +181,10 @@ pub async fn fetch_jobs(pool: &SqlitePool, filter: JobFilter) -> Result<JobsPage
     })
 }
 
-fn apply_job_filters<'q>(
-    qb: &mut QueryBuilder<'q, Sqlite>,
-    filter: &'q JobFilter,
-    search_pattern: Option<&'q str>,
+fn apply_job_filters(
+    qb: &mut QueryBuilder<Sqlite>,
+    filter: &JobFilter,
+    search_pattern: Option<&str>,
 ) {
     if let Some(status) = filter.status {
         qb.push(" AND status = ");

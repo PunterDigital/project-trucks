@@ -43,8 +43,9 @@ data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
 
 - `ci.yml`: ubuntu frontend typecheck/lint/unit tests/build; windows fmt/clippy/test, installers, E2E against the release
   binary. Both job names are required checks on `main`: keep them unchanged.
-- `release.yml` on `v*` tags: creates the release with generated notes, `tauri-action` uploads the
-  Windows `_x64-setup.exe` / `.msi`, then a job verifies both exist.
+- `release.yml` on `v*` tags: creates the release with generated notes, `tauri-action` (v1) uploads the
+  Windows `_x64-setup.exe` / `.msi`, then a job verifies both exist. tauri-action v1 rewrites the name and body
+  of an existing release from its inputs, so the first job passes the generated notes on as `releaseBody`.
 - Version lives in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` (+ `Cargo.lock`):
   bump all of them in the release commit.
 
