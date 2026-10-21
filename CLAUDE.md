@@ -48,6 +48,17 @@ data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
 - Version lives in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` (+ `Cargo.lock`):
   bump all of them in the release commit.
 
+## Dependency updates
+
+Tauri's npm packages (`@tauri-apps/*`) and Rust crates (`tauri`, `tauri-*`) must stay on the same
+minor version, or `tauri build` fails with "Found version mismatched Tauri packages". Dependabot
+opens npm and cargo PRs separately, so `.github/dependabot.yml` ignores Tauri's minor/patch bumps
+(majors still come as PRs) and the weekly maintenance run bumps both sides in one PR:
+`pnpm update '@tauri-apps/*' --latest` (stay on 2.x), then in `src-tauri`
+`cargo update -p tauri -p tauri-build -p tauri-plugin-opener`, check the `tauri` crate and
+`@tauri-apps/api` share a minor, and run the full CI locally. The ignore also hides Tauri security
+updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the same run.
+
 ## Quirks
 
 - CSP lives in `tauri.conf.json` (`app.security.csp`). Tauri adds script hashes to it only when it

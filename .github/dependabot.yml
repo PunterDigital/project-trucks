@@ -1,9 +1,17 @@
 version: 2
 updates:
+  # Tauri's npm packages and Rust crates must stay on the same minor version, or
+  # `tauri build` fails ("Found version mismatched Tauri packages"). Separate npm
+  # and cargo PRs can never pass on their own, so Dependabot leaves Tauri's
+  # minor/patch bumps alone and the weekly maintenance run bumps both sides in
+  # one PR (see CLAUDE.md, "Dependency updates").
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "@tauri-apps/*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
@@ -11,6 +19,11 @@ updates:
     directory: /src-tauri
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "tauri"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "tauri-*"
+        update-types: ["version-update:semver-minor", "version-update:semver-patch"]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
