@@ -48,6 +48,14 @@
       "icons/icon.ico"
     ],
     "shortDescription": "Local Euro Truck Simulator 2 delivery tracker",
-    "category": "Utility"
+    "longDescription": "ProjectTrucks logs every Euro Truck Simulator 2 delivery, session and kilometre to a private SQLite database on your own machine, with a dashboard, per-truck stats, CSV export and backups. Auto-capture reads the game through the bundled telemetry plugin.",
+    "publisher": "PunterDigital",
+    "copyright": "Copyright (c) 2026 Shay Punter. MIT licence.",
+    "category": "Utility",
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico"
+      }
+    }
   }
 }
