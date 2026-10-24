@@ -1,6 +1,6 @@
 [package]
 name = "projecttrucks"
-version = "0.3.0"
+version = "0.4.0"
 description = "ProjectTrucks - a local ETS2 delivery tracker"
 authors = ["Shay Punter <shay@shaypunter.co.uk>"]
 edition = "2021"
