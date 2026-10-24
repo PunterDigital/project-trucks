@@ -82,7 +82,12 @@ async function seed(page: Page) {
   // Volvo: its own rows, which must stay off the Scania's page: 1,999 km, 1 job.
   await invoke(page, "create_session", { input: session(VOLVO, "FREE_ROAM", 1000, 600) });
   await invoke(page, "create_job", {
-    input: job(VOLVO, { destCity: "Gdansk", distanceKm: 999, declaredIncome: 1 }),
+    input: job(VOLVO, {
+      sourceCity: "Warsaw",
+      destCity: "Gdansk",
+      distanceKm: 999,
+      declaredIncome: 1,
+    }),
   });
 }
 
