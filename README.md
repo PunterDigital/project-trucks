@@ -6,13 +6,14 @@ A local Euro Truck Simulator 2 delivery tracker. Runs on your own machine, reads
 telemetry while you play, and writes every kilometre and every job to a local
 SQLite database. No accounts, no cloud, no telemetry-back-to-us.
 
-**Status:** **M3 complete (v0.4.0).** Deliveries and free-roam drives are
-captured from ETS2 automatically through the bundled telemetry plugin, or
-logged by hand. There is a dashboard with lifetime and monthly stats and a
-30-day chart, a page per truck, a searchable job history, CSV export and a
-one-click database backup. The architectural plan is in [PLAN.md](PLAN.md);
-the milestone-by-milestone implementation plan is in
-[CLAUDE_CODE_PLAN.md](CLAUDE_CODE_PLAN.md).
+**Status:** **Roadmap complete, M1–M4 (v0.5.0).** Deliveries and free-roam
+drives are captured from ETS2 automatically through the bundled telemetry
+plugin, or logged by hand. There is a dashboard with lifetime and monthly
+stats and a 30-day chart, a page per truck, a searchable job history, CSV
+export and a one-click database backup. The architectural plan is in
+[PLAN.md](PLAN.md); the milestone-by-milestone implementation plan is in
+[CLAUDE_CODE_PLAN.md](CLAUDE_CODE_PLAN.md); what changed in each version is
+in [CHANGELOG.md](CHANGELOG.md).
 
 Licensed under **MIT** (see [LICENSE](LICENSE)). The bundled plugin DLL is
 also MIT (built from
@@ -27,16 +28,60 @@ provenance is in [assets/telemetry-plugin/README.md](assets/telemetry-plugin/REA
 
 ![A truck's page: its own stats, 30-day chart, jobs and driving sessions](docs/screenshots/truck.png)
 
-## Download
+## Install
 
-ProjectTrucks is **Windows only**. Grab the latest
-installer (`.exe` or `.msi`) from the
-[downloads page](https://punterdigital.github.io/personal-apps/) or the
-[GitHub Releases](https://github.com/PunterDigital/project-trucks/releases).
-Builds are unsigned: click **More info → Run anyway** at the SmartScreen prompt.
-(v0.1.0 also shipped a macOS `.dmg` for manual logging; later versions don't.)
+ProjectTrucks is **Windows only** (Windows 10 or 11, 64-bit). It needs no
+account and talks to nothing on the internet.
 
-## What you can do today (M1–M3)
+1. Download the latest `ProjectTrucks_<version>_x64-setup.exe` from the
+   [downloads page](https://punterdigital.github.io/personal-apps/) or the
+   [GitHub Releases](https://github.com/PunterDigital/project-trucks/releases).
+   (The `.msi` on the same release installs the same thing; use it if you
+   prefer MSI, for example for a scripted install.)
+2. Run it. **Builds are unsigned**, so Windows SmartScreen shows
+   "Windows protected your PC": click **More info**, then **Run anyway**.
+   Your browser may also ask you to keep the download for the same reason.
+3. Follow the installer. ProjectTrucks appears in the Start menu; the WebView2
+   runtime it uses is already part of Windows 11 and the installer fetches it
+   on Windows 10 if it is missing.
+4. Updating is the same: run the newer installer over the old install. Your
+   data stays where it is (see [Back up and restore](#back-up-and-restore-your-data)).
+
+v0.1.0 also shipped a macOS `.dmg` for manual logging; later versions don't,
+because the telemetry plugin only exists for Windows.
+
+## Set up live capture from ETS2
+
+ProjectTrucks reads the game through a small telemetry plugin (the MIT-licensed
+[Funbit/ets2-sdk-plugin](https://github.com/Funbit/ets2-sdk-plugin), bundled
+with the app). Once it is installed, every delivery and free-roam drive is
+recorded while you play.
+
+1. Open ProjectTrucks. On first launch it shows **Set up live telemetry?**
+   with your ETS2 folder found through Steam. Click **Install**. That's it.
+   (**Not now** hides the banner until a new plugin version ships.)
+2. If you skipped that, or Steam didn't find the game: go to **Settings**,
+   check the **ETS2 folder** (click **Detect**, or paste the folder that holds
+   `bin\win_x64\eurotrucks2.exe`), then under **Telemetry plugin** click
+   **Install plugin**. The status badge turns to **Installed**. The plugin goes
+   into `<ETS2 folder>\bin\win_x64\plugins`; a different plugin already there is
+   kept as a `.bak`.
+3. Under **Auto-capture**, tick **Record drives and deliveries from ETS2
+   automatically**.
+4. Start Euro Truck Simulator 2. The first launch after installing a plugin
+   shows a one-time "advanced SDK features" dialog from the game: click **OK**.
+   Keep ProjectTrucks running (it can sit in the background) and drive.
+
+Each finished delivery shows up under **Jobs** with its distance, duration,
+truck, cargo, income and on-time / late / cancelled outcome; a stretch without
+a job is a free-roam session on the truck's page. A record that looks wrong
+(average speed over 150 km/h, under 1 km) is marked **Flagged** so you can
+check it and clear the flag on the job page.
+
+When a newer plugin ships with an update, the banner comes back with
+**Update**; Settings shows **Update plugin**.
+
+## What you can do today
 
 - **Auto-capture from ETS2.** Install the telemetry plugin from Settings (the
   app offers it on first launch), switch auto-capture on and play: every
@@ -89,19 +134,42 @@ minutes on a warm cache. Subsequent runs are incremental (~10–30 s).
 pnpm tauri build
 ```
 
-This produces an MSI installer under `src-tauri/target/release/bundle/msi/`.
-You can install that as a normal Windows app.
+This produces the NSIS installer under `src-tauri/target/release/bundle/nsis/`
+and an MSI under `src-tauri/target/release/bundle/msi/`. Either installs as a
+normal Windows app. The app icon comes from `assets/icon/projecttrucks.svg`
+(regenerate the sizes with `pnpm tauri icon assets/icon/projecttrucks.svg`).
 
-## Where the data lives
+## Back up and restore your data
 
-The local SQLite database is stored at:
+Everything lives in one SQLite file:
 
 ```
 %APPDATA%\co.shaypunter.projecttrucks\projecttrucks.db
 ```
 
-You can copy that file as a backup any time. Schema migrations are append-only
-SQL files under `src-tauri/migrations/` and run automatically on every launch.
+**Back up.** In **Settings → Your data**, click **Back up database** and pick
+where to save the `.db` snapshot (it is a consistent copy, safe to take while
+the app is running). **Export jobs to CSV** writes every job to a spreadsheet-
+friendly file if you want the data elsewhere.
+
+**Restore.** Close ProjectTrucks, copy your backup over
+`%APPDATA%\co.shaypunter.projecttrucks\projecttrucks.db` (rename the current
+file first if you want to keep it), and start the app again. A backup from an
+older version is fine: schema migrations are append-only SQL files under
+`src-tauri/migrations/` and run automatically on every launch.
+
+Uninstalling leaves that folder in place, so a reinstall picks your data up
+again; delete the folder yourself if you want it gone.
+
+## Report a problem
+
+Open an issue at
+[github.com/PunterDigital/project-trucks/issues](https://github.com/PunterDigital/project-trucks/issues)
+with the ProjectTrucks version (the installer's file name has it), what you
+did, what you expected and what happened. For a capture that came out wrong,
+the job's details (route, distance, the **Flagged** reason if any) and
+whether the drive involved a ferry, a cancel or alt-tabbing out of the game
+help most; a CSV export of the job is ideal.
 
 ## Project layout
 
