@@ -98,6 +98,12 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   150 km/h or distance under 1 km sets `flagged` + `flag_reason`; manual entries are never auto-flagged. The Jobs list and
   job page show a "Flagged" badge. `e2e/scenarios.spec.ts` replays a whole shift (cancel, on-time, ferry teleport, alt-tab gap,
   fast delivery) with a `Shift` builder; the first 1.2 km of a job are driven before the job is seen, so distances are 10.8 not 12.
+- Dashboard (M3.1, `src/routes/Dashboard.tsx`, `commands/stats.rs`): `get_dashboard_stats` takes the viewer's UTC offset
+  (`-getTimezoneOffset()`), so "this month" and the 30-day series follow local days; tests pin `now` through
+  `DashboardQuery`. Distances follow the rollup rules (sessions carry recorded km, a manual job its own; cancelled
+  manual jobs still count km, not deliveries or income). Charts are recharts with `var(--chart-*)` fills; they draw
+  nothing in a zero-size container, so the chart boxes have fixed heights. Stat cards carry
+  `data-testid="stat-card"` + `data-label` for E2E (`e2e/dashboard.spec.ts`).
 - First-launch prompt (`src/components/PluginPrompt.tsx`, shown under the header except on `/settings`): when the plugin
   is missing or outdated it offers Install/Update with the saved ETS2 folder. "Not now" stores the bundled DLL's SHA-256
   (`plugin_prompt_dismissed` setting, `PluginStatus.bundledSha`), so it only returns when the app ships a different plugin.
