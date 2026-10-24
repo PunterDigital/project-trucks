@@ -118,7 +118,7 @@ test.describe("auto-capture from a replayed drive", () => {
 
     // The status started as not_connected and ended parked (the event or the command got it there).
     await page.getByRole("link", { name: "Dashboard", exact: true }).click();
-    await expect(page.getByText("telemetry: parked")).toBeVisible();
+    await expect(page.getByTestId("telemetry-status")).toHaveText("Parked");
   });
 });
 

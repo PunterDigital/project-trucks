@@ -175,3 +175,39 @@ export interface SettingsPatch {
   units?: "km" | "mi";
   pluginPromptDismissed?: string;
 }
+
+// --- Dashboard (M3.1) ----------------------------------------------------
+
+/** Totals for one period. Mirrors `commands::stats::PeriodStats`. */
+export interface PeriodStats {
+  totalKm: number;
+  deliveryKm: number;
+  freeRoamKm: number;
+  /** Delivered (on time or late); cancelled jobs are not deliveries. */
+  deliveries: number;
+  income: number;
+  onTime: number;
+  late: number;
+}
+
+/** One local day of the distance series (`day` is YYYY-MM-DD). */
+export interface DistanceDay {
+  day: string;
+  deliveryKm: number;
+  freeRoamKm: number;
+}
+
+export interface DashboardStats {
+  lifetime: PeriodStats;
+  thisMonth: PeriodStats;
+  lastMonth: PeriodStats;
+  /** 30 entries, oldest first, ending today. */
+  last30Days: DistanceDay[];
+  recentJobs: Job[];
+}
+
+export interface DashboardQuery {
+  /** Minutes east of UTC (`-new Date().getTimezoneOffset()`). */
+  utcOffsetMinutes?: number;
+  now?: IsoDateTime;
+}

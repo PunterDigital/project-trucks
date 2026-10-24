@@ -4,7 +4,8 @@ test.skip(process.platform !== "win32", "WebView2 (Windows) is the only webview 
 
 test("launches to the dashboard with a working database", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Dashboard", exact: true })).toBeVisible();
-  await expect(page.getByText("db_ping: DB ok")).toBeVisible();
+  await expect(page.getByText("ETS2 not connected")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Nothing tracked yet" })).toBeVisible();
   for (const item of ["Dashboard", "Jobs", "Trucks", "Settings"]) {
     await expect(page.getByRole("link", { name: item, exact: true })).toBeVisible();
   }

@@ -6,6 +6,8 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type {
+  DashboardQuery,
+  DashboardStats,
   DbPing,
   DrivingSession,
   Job,
@@ -68,4 +70,8 @@ export const api = {
   listTrucks: () => invoke<Truck[]>("list_trucks"),
 
   getTruck: (id: string) => invoke<Truck | null>("get_truck", { id }),
+
+  // -- Dashboard ----
+  getDashboardStats: (query?: DashboardQuery) =>
+    invoke<DashboardStats>("get_dashboard_stats", { query: query ?? null }),
 };
