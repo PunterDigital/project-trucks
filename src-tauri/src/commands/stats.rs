@@ -18,7 +18,8 @@ use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use tauri::State;
 
 use crate::commands::jobs::fetch_jobs;
-use crate::db::models::{Job, JobFilter};
+use crate::commands::trucks::fetch_truck;
+use crate::db::models::{Job, JobFilter, Truck};
 use crate::db::AppState;
 
 /// How many days the distance series covers (today included).
@@ -60,6 +61,39 @@ pub struct DashboardStats {
     pub last_30_days: Vec<DistanceDay>,
     /// Latest `RECENT_JOBS` jobs by `completed_at`, any status.
     pub recent_jobs: Vec<Job>,
+}
+
+/// One truck's figures (M3.2). The period totals follow the same rules as the
+/// dashboard, scoped to rows whose `truck_make`/`truck_model` match the truck.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TruckStats {
+    pub truck: Truck,
+    /// Everything ever driven on this truck. `total_km` equals the Trucks list.
+    pub lifetime: PeriodStats,
+    /// Jobs of any status on this truck, the same count as the Trucks list.
+    pub total_jobs: i64,
+    /// Mean `distance_km` of those jobs (what the Jobs table shows per row); `None` with no jobs.
+    pub avg_job_km: Option<f64>,
+    /// Exactly `SERIES_DAYS` entries, oldest first, ending today (local).
+    pub last_30_days: Vec<DistanceDay>,
+}
+
+/// Restrict the stats queries to one truck. `None` means the whole database.
+#[derive(Debug, Clone, Copy)]
+struct TruckScope<'a> {
+    make: &'a str,
+    model: &'a str,
+}
+
+/// Push ` AND truck_make = ? AND truck_model = ?` when scoped to a truck.
+fn push_truck(qb: &mut QueryBuilder<Sqlite>, truck: Option<TruckScope<'_>>) {
+    if let Some(truck) = truck {
+        qb.push(" AND truck_make = ");
+        qb.push_bind(truck.make.to_owned());
+        qb.push(" AND truck_model = ");
+        qb.push_bind(truck.model.to_owned());
+    }
 }
 
 /// Optional inputs for `get_dashboard_stats`.
@@ -146,6 +180,15 @@ pub async fn period_stats(
     from: Option<DateTime<Utc>>,
     to: Option<DateTime<Utc>>,
 ) -> Result<PeriodStats> {
+    scoped_period_stats(pool, None, from, to).await
+}
+
+async fn scoped_period_stats(
+    pool: &SqlitePool,
+    truck: Option<TruckScope<'_>>,
+    from: Option<DateTime<Utc>>,
+    to: Option<DateTime<Utc>>,
+) -> Result<PeriodStats> {
     // The `ELSE 0.0` literals keep SUM a REAL (see db::rollups).
     let mut sessions: QueryBuilder<Sqlite> = QueryBuilder::new(
         "SELECT
@@ -153,6 +196,7 @@ pub async fn period_stats(
            COALESCE(SUM(CASE WHEN kind = 'FREE_ROAM' THEN distance_km ELSE 0.0 END), 0.0)
          FROM driving_sessions WHERE 1=1",
     );
+    push_truck(&mut sessions, truck);
     push_range(&mut sessions, "ended_at", from, to);
     let (session_delivery_km, free_roam_km): (f64, f64) = sessions
         .build_query_as()
@@ -170,6 +214,7 @@ pub async fn period_stats(
                              THEN distance_km ELSE 0.0 END), 0.0)
          FROM jobs WHERE 1=1",
     );
+    push_truck(&mut jobs, truck);
     push_range(&mut jobs, "completed_at", from, to);
     let (deliveries, income, on_time, late, manual_km): (i64, i64, i64, i64, f64) = jobs
         .build_query_as()
@@ -190,7 +235,11 @@ pub async fn period_stats(
 }
 
 /// Per-day distances for the last `SERIES_DAYS` local days, zero-filled.
-async fn distance_series(pool: &SqlitePool, cal: &Calendar) -> Result<Vec<DistanceDay>> {
+async fn distance_series(
+    pool: &SqlitePool,
+    cal: &Calendar,
+    truck: Option<TruckScope<'_>>,
+) -> Result<Vec<DistanceDay>> {
     let mut days: Vec<DistanceDay> = (0..SERIES_DAYS)
         .map(|i| DistanceDay {
             day: (cal.today - Duration::days(SERIES_DAYS - 1 - i)).to_string(),
@@ -212,30 +261,72 @@ async fn distance_series(pool: &SqlitePool, cal: &Calendar) -> Result<Vec<Distan
         }
     };
 
-    let sessions: Vec<(String, f64, DateTime<Utc>)> = sqlx::query_as(
-        "SELECT kind, distance_km, ended_at FROM driving_sessions WHERE ended_at >= ?",
-    )
-    .bind(cal.series_start)
-    .fetch_all(pool)
-    .await
-    .context("loading sessions for the series")?;
+    let mut sessions: QueryBuilder<Sqlite> =
+        QueryBuilder::new("SELECT kind, distance_km, ended_at FROM driving_sessions WHERE 1=1");
+    push_truck(&mut sessions, truck);
+    push_range(&mut sessions, "ended_at", Some(cal.series_start), None);
+    let sessions: Vec<(String, f64, DateTime<Utc>)> = sessions
+        .build_query_as()
+        .fetch_all(pool)
+        .await
+        .context("loading sessions for the series")?;
     for (kind, km, ended_at) in sessions {
         add(ended_at, kind == "JOB", km);
     }
 
-    let manual: Vec<(f64, DateTime<Utc>)> = sqlx::query_as(
+    let mut manual: QueryBuilder<Sqlite> = QueryBuilder::new(
         "SELECT distance_km, completed_at FROM jobs
-         WHERE source = 'MANUAL' AND session_id IS NULL AND completed_at >= ?",
-    )
-    .bind(cal.series_start)
-    .fetch_all(pool)
-    .await
-    .context("loading manual jobs for the series")?;
+         WHERE source = 'MANUAL' AND session_id IS NULL",
+    );
+    push_truck(&mut manual, truck);
+    push_range(&mut manual, "completed_at", Some(cal.series_start), None);
+    let manual: Vec<(f64, DateTime<Utc>)> = manual
+        .build_query_as()
+        .fetch_all(pool)
+        .await
+        .context("loading manual jobs for the series")?;
     for (km, completed_at) in manual {
         add(completed_at, true, km);
     }
 
     Ok(days)
+}
+
+/// Stats for one truck, or `None` when the id is unknown.
+pub async fn fetch_truck_stats(
+    pool: &SqlitePool,
+    id: &str,
+    query: DashboardQuery,
+) -> Result<Option<TruckStats>> {
+    let Some(truck) = fetch_truck(pool, id).await? else {
+        return Ok(None);
+    };
+    let scope = Some(TruckScope {
+        make: &truck.make,
+        model: &truck.model,
+    });
+    let now = query.now.unwrap_or_else(Utc::now);
+    let cal = Calendar::new(now, query.utc_offset_minutes.unwrap_or(0));
+
+    let lifetime = scoped_period_stats(pool, scope, None, None).await?;
+    let last_30_days = distance_series(pool, &cal, scope).await?;
+
+    let mut jobs: QueryBuilder<Sqlite> =
+        QueryBuilder::new("SELECT COUNT(*), AVG(distance_km) FROM jobs WHERE 1=1");
+    push_truck(&mut jobs, scope);
+    let (total_jobs, avg_job_km): (i64, Option<f64>) = jobs
+        .build_query_as()
+        .fetch_one(pool)
+        .await
+        .context("averaging the truck's jobs")?;
+
+    Ok(Some(TruckStats {
+        truck,
+        lifetime,
+        total_jobs,
+        avg_job_km,
+        last_30_days,
+    }))
 }
 
 pub async fn fetch_dashboard_stats(
@@ -248,7 +339,7 @@ pub async fn fetch_dashboard_stats(
     let lifetime = period_stats(pool, None, None).await?;
     let this_month = period_stats(pool, Some(cal.month_start), None).await?;
     let last_month = period_stats(pool, Some(cal.last_month_start), Some(cal.month_start)).await?;
-    let last_30_days = distance_series(pool, &cal).await?;
+    let last_30_days = distance_series(pool, &cal, None).await?;
     let recent_jobs = fetch_jobs(
         pool,
         JobFilter {
@@ -276,6 +367,17 @@ pub async fn get_dashboard_stats(
     query: Option<DashboardQuery>,
 ) -> Result<DashboardStats, String> {
     fetch_dashboard_stats(&state.pool, query.unwrap_or_default())
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_truck_stats(
+    state: State<'_, AppState>,
+    id: String,
+    query: Option<DashboardQuery>,
+) -> Result<Option<TruckStats>, String> {
+    fetch_truck_stats(&state.pool, &id, query.unwrap_or_default())
         .await
         .map_err(|e| e.to_string())
 }
@@ -528,6 +630,115 @@ mod tests {
         assert_eq!(stats.recent_jobs.len(), RECENT_JOBS as usize);
         assert_eq!(stats.recent_jobs[0].completed_at, now());
         assert_eq!(stats.recent_jobs[4].completed_at, now() - Duration::days(4));
+    }
+
+    #[tokio::test]
+    async fn truck_stats_only_count_that_truck_and_match_its_rollup() {
+        use crate::commands::trucks::fetch_truck;
+        use crate::db::rollups::truck_id;
+
+        let pool = test_pool().await;
+        let today = now() - Duration::hours(2);
+        // Scania R 730 (the test helpers' default truck): 200 km recorded delivery (job row says
+        // 100), 30 km free roam, a 412 km manual late job and a 50 km cancelled manual job.
+        let ses = insert_session(&pool, session(SessionKind::Job, 200.0, today))
+            .await
+            .unwrap();
+        insert_job(
+            &pool,
+            job(Some(ses.id), 100.0, 5_000, JobStatus::Delivered, today),
+        )
+        .await
+        .unwrap();
+        insert_session(&pool, session(SessionKind::FreeRoam, 30.0, today))
+            .await
+            .unwrap();
+        insert_job(&pool, job(None, 412.0, 8_500, JobStatus::Late, today))
+            .await
+            .unwrap();
+        insert_job(&pool, job(None, 50.0, 9_999, JobStatus::Cancelled, today))
+            .await
+            .unwrap();
+        // A Volvo with its own rows, which must stay out of the Scania's numbers.
+        let mut volvo_session = session(SessionKind::FreeRoam, 1_000.0, today);
+        volvo_session.truck_make = Some("Volvo".into());
+        volvo_session.truck_model = Some("FH16".into());
+        insert_session(&pool, volvo_session).await.unwrap();
+        let mut volvo_job = job(None, 999.0, 1, JobStatus::Delivered, today);
+        volvo_job.truck_make = Some("Volvo".into());
+        volvo_job.truck_model = Some("FH16".into());
+        insert_job(&pool, volvo_job).await.unwrap();
+
+        let id = truck_id("Scania", "R 730");
+        let stats = fetch_truck_stats(&pool, &id, query(now(), 0))
+            .await
+            .unwrap()
+            .expect("the Scania exists");
+        assert_eq!(stats.truck.id, id);
+        assert_eq!(
+            stats.lifetime,
+            PeriodStats {
+                total_km: 692.0,
+                delivery_km: 662.0,
+                free_roam_km: 30.0,
+                deliveries: 2,
+                income: 13_500,
+                on_time: 1,
+                late: 1,
+            }
+        );
+        // The Trucks list shows the rollup row: the page must agree with it.
+        let rollup = fetch_truck(&pool, &id).await.unwrap().unwrap();
+        assert_eq!(stats.lifetime.total_km, rollup.total_distance_km);
+        assert_eq!(stats.lifetime.delivery_km, rollup.total_delivery_distance);
+        assert_eq!(stats.lifetime.free_roam_km, rollup.total_free_roam_distance);
+        assert_eq!(stats.total_jobs, rollup.total_jobs);
+        assert_eq!(stats.total_jobs, 3);
+        // Mean of the job rows' own distances: (100 + 412 + 50) / 3.
+        let avg = stats.avg_job_km.unwrap();
+        assert!((avg - 562.0 / 3.0).abs() < 1e-9, "avg was {avg}");
+
+        let today_entry = stats.last_30_days.last().unwrap();
+        assert_eq!(stats.last_30_days.len(), SERIES_DAYS as usize);
+        assert_eq!(today_entry.delivery_km, 662.0);
+        assert_eq!(today_entry.free_roam_km, 30.0);
+
+        // The Volvo sees only its own rows.
+        let volvo = fetch_truck_stats(&pool, &truck_id("Volvo", "FH16"), query(now(), 0))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(volvo.lifetime.total_km, 1_999.0);
+        assert_eq!(volvo.lifetime.free_roam_km, 1_000.0);
+        assert_eq!(volvo.total_jobs, 1);
+        assert_eq!(volvo.avg_job_km, Some(999.0));
+
+        // The dashboard still sums both trucks.
+        let all = fetch_dashboard_stats(&pool, query(now(), 0)).await.unwrap();
+        assert_eq!(all.lifetime.total_km, 692.0 + 1_999.0);
+    }
+
+    #[tokio::test]
+    async fn truck_stats_for_an_unknown_truck_are_none_and_a_truck_without_jobs_has_no_average() {
+        use crate::db::rollups::truck_id;
+
+        let pool = test_pool().await;
+        assert!(fetch_truck_stats(&pool, "nope", query(now(), 0))
+            .await
+            .unwrap()
+            .is_none());
+
+        insert_session(&pool, session(SessionKind::FreeRoam, 12.0, now()))
+            .await
+            .unwrap();
+        let stats = fetch_truck_stats(&pool, &truck_id("Scania", "R 730"), query(now(), 0))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stats.total_jobs, 0);
+        assert_eq!(stats.avg_job_km, None);
+        assert_eq!(stats.lifetime.free_roam_km, 12.0);
+        assert_eq!(stats.lifetime.deliveries, 0);
     }
 
     #[tokio::test]

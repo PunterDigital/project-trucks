@@ -22,6 +22,7 @@ import type {
   Settings,
   SettingsPatch,
   Truck,
+  TruckStats,
 } from "@/types";
 import type { TelemetryStatus } from "@/lib/useTelemetryEvents";
 
@@ -74,4 +75,7 @@ export const api = {
   // -- Dashboard ----
   getDashboardStats: (query?: DashboardQuery) =>
     invoke<DashboardStats>("get_dashboard_stats", { query: query ?? null }),
+
+  getTruckStats: (id: string, query?: DashboardQuery) =>
+    invoke<TruckStats | null>("get_truck_stats", { id, query: query ?? null }),
 };

@@ -104,6 +104,14 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   manual jobs still count km, not deliveries or income). Charts are recharts with `var(--chart-*)` fills; they draw
   nothing in a zero-size container, so the chart boxes have fixed heights. Stat cards carry
   `data-testid="stat-card"` + `data-label` for E2E (`e2e/dashboard.spec.ts`).
+- Truck page (M3.2, `src/routes/TruckDetail.tsx`): `get_truck_stats(id, query)` returns `None` for an unknown id, else the
+  truck row plus a lifetime `PeriodStats` scoped to the truck (`TruckScope` in `commands/stats.rs` pushes
+  `truck_make = ? AND truck_model = ?` into the same queries the dashboard uses, so the two can't drift), the job count,
+  the mean of the job rows' own `distance_km` and the 30-day series. `JobFilter`/`SessionFilter` take `truckMake` +
+  `truckModel` (send both) for the "Jobs" and "All sessions" tabs; the shared table lives in `src/components/JobsTable.tsx`
+  (with `Pager`). Tabs are radix via the `radix-ui` umbrella package (`src/components/ui/tabs.tsx`, written by hand, no
+  new dependency). E2E: `e2e/truck-detail.spec.ts` seeds two trucks and checks the page against the Trucks list and the
+  Dashboard; `data-testid="truck-jobs"` / `"truck-sessions"` / `"session-kind"`.
 - First-launch prompt (`src/components/PluginPrompt.tsx`, shown under the header except on `/settings`): when the plugin
   is missing or outdated it offers Install/Update with the saved ETS2 folder. "Not now" stores the bundled DLL's SHA-256
   (`plugin_prompt_dismissed` setting, `PluginStatus.bundledSha`), so it only returns when the app ships a different plugin.
