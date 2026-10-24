@@ -136,6 +136,9 @@ pub struct SessionFilter {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub kind: Option<SessionKind>,
+    /// Only sessions on this truck (both set; see `db::rollups::truck_id`).
+    pub truck_make: Option<String>,
+    pub truck_model: Option<String>,
     /// `ended_at >= from` (inclusive).
     pub from: Option<DateTime<Utc>>,
     /// `ended_at < to` (exclusive).
@@ -153,6 +156,9 @@ pub struct JobFilter {
     pub offset: Option<i64>,
     pub status: Option<JobStatus>,
     pub search: Option<String>,
+    /// Only jobs on this truck (both set).
+    pub truck_make: Option<String>,
+    pub truck_model: Option<String>,
     pub from: Option<DateTime<Utc>>,
     pub to: Option<DateTime<Utc>>,
 }

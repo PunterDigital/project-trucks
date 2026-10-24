@@ -190,6 +190,14 @@ fn apply_job_filters(
         qb.push(" AND status = ");
         qb.push_bind(status);
     }
+    if let Some(make) = &filter.truck_make {
+        qb.push(" AND truck_make = ");
+        qb.push_bind(make.clone());
+    }
+    if let Some(model) = &filter.truck_model {
+        qb.push(" AND truck_model = ");
+        qb.push_bind(model.clone());
+    }
     if let Some(from) = filter.from {
         qb.push(" AND completed_at >= ");
         qb.push_bind(from);
@@ -571,6 +579,49 @@ mod tests {
         .unwrap();
         assert_eq!(only_first_day.total, 1);
         assert_eq!(only_first_day.items[0].status, JobStatus::Delivered);
+    }
+
+    #[tokio::test]
+    async fn fetch_jobs_filters_by_truck() {
+        let pool = test_pool().await;
+        insert_job(&pool, sample_job(None)).await.unwrap();
+        let mut volvo = sample_job(None);
+        volvo.truck_make = Some("Volvo".into());
+        volvo.truck_model = Some("FH16".into());
+        volvo.dest_city = "Oslo".into();
+        insert_job(&pool, volvo).await.unwrap();
+        // Same make, another model: must not match.
+        let mut other_scania = sample_job(None);
+        other_scania.truck_model = Some("S 730".into());
+        insert_job(&pool, other_scania).await.unwrap();
+
+        let page = fetch_jobs(
+            &pool,
+            JobFilter {
+                truck_make: Some("Volvo".into()),
+                truck_model: Some("FH16".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].dest_city, "Oslo");
+
+        // The truck filter stacks with the others.
+        let page = fetch_jobs(
+            &pool,
+            JobFilter {
+                truck_make: Some("Scania".into()),
+                truck_model: Some("R 730".into()),
+                search: Some("Berlin".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].truck_model.as_deref(), Some("R 730"));
     }
 
     #[tokio::test]

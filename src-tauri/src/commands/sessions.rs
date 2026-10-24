@@ -118,6 +118,14 @@ fn apply_session_filters(qb: &mut QueryBuilder<Sqlite>, filter: &SessionFilter) 
         qb.push(" AND kind = ");
         qb.push_bind(kind);
     }
+    if let Some(make) = &filter.truck_make {
+        qb.push(" AND truck_make = ");
+        qb.push_bind(make.clone());
+    }
+    if let Some(model) = &filter.truck_model {
+        qb.push(" AND truck_model = ");
+        qb.push_bind(model.clone());
+    }
     if let Some(from) = filter.from {
         qb.push(" AND ended_at >= ");
         qb.push_bind(from);
@@ -364,6 +372,35 @@ mod tests {
         .unwrap();
         assert_eq!(page.total, 2);
         assert!(page.items.iter().all(|s| s.kind == SessionKind::Job));
+    }
+
+    #[tokio::test]
+    async fn list_sessions_filters_by_truck() {
+        let pool = test_pool().await;
+        insert_session(&pool, sample_input(SessionKind::FreeRoam, 10.0))
+            .await
+            .unwrap();
+        let mut volvo = sample_input(SessionKind::Job, 200.0);
+        volvo.truck_make = Some("Volvo".into());
+        volvo.truck_model = Some("FH16".into());
+        insert_session(&pool, volvo).await.unwrap();
+        // Same make, another model: must not match.
+        let mut other_scania = sample_input(SessionKind::Job, 50.0);
+        other_scania.truck_model = Some("S 730".into());
+        insert_session(&pool, other_scania).await.unwrap();
+
+        let page = fetch_sessions(
+            &pool,
+            SessionFilter {
+                truck_make: Some("Scania".into()),
+                truck_model: Some("R 730".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].distance_km, 10.0);
     }
 
     #[tokio::test]

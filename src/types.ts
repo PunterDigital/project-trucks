@@ -113,6 +113,9 @@ export interface SessionFilter {
   limit?: number | null;
   offset?: number | null;
   kind?: SessionKind | null;
+  /** Only sessions on this truck (send both). */
+  truckMake?: string | null;
+  truckModel?: string | null;
   from?: IsoDateTime | null;
   to?: IsoDateTime | null;
 }
@@ -122,6 +125,9 @@ export interface JobFilter {
   offset?: number | null;
   status?: JobStatus | null;
   search?: string | null;
+  /** Only jobs on this truck (send both). */
+  truckMake?: string | null;
+  truckModel?: string | null;
   from?: IsoDateTime | null;
   to?: IsoDateTime | null;
 }
@@ -210,4 +216,19 @@ export interface DashboardQuery {
   /** Minutes east of UTC (`-new Date().getTimezoneOffset()`). */
   utcOffsetMinutes?: number;
   now?: IsoDateTime;
+}
+
+// --- Truck detail (M3.2) -------------------------------------------------
+
+/** One truck's figures. Mirrors `commands::stats::TruckStats`. */
+export interface TruckStats {
+  truck: Truck;
+  /** Everything driven on this truck; `totalKm` equals the Trucks list. */
+  lifetime: PeriodStats;
+  /** Jobs of any status, the Trucks list's count. */
+  totalJobs: number;
+  /** Mean job distance (the per-row figure in the Jobs table); null with no jobs. */
+  avgJobKm: number | null;
+  /** 30 entries, oldest first, ending today. */
+  last30Days: DistanceDay[];
 }

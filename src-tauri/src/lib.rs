@@ -52,6 +52,7 @@ pub fn run() {
             commands::trucks::list_trucks,
             commands::trucks::get_truck,
             commands::stats::get_dashboard_stats,
+            commands::stats::get_truck_stats,
             telemetry::runner::get_telemetry_status,
             settings::get_settings,
             settings::update_settings,

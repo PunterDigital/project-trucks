@@ -3,8 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import type { DateRange } from "react-day-picker";
 
 import { DateRangePicker } from "@/components/DateRangePicker";
-import { Badge } from "@/components/ui/badge";
-import { JobStatusBadge } from "@/components/JobStatusBadge";
+import { JobsTable, Pager } from "@/components/JobsTable";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,23 +13,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 
 import { api } from "@/lib/api";
 import { useCaptureRefresh } from "@/lib/useTelemetryEvents";
-import {
-  formatCurrency,
-  formatDate,
-  formatDuration,
-  formatKm,
-} from "@/lib/format";
 import { useDebounce } from "@/lib/useDebounce";
 import type { JobFilter, JobsPage, JobStatus } from "@/types";
 
@@ -125,7 +110,6 @@ export function Jobs() {
   const empty = !loading && data && data.items.length === 0;
   const showFirstRunCta = empty && noFilters && data.total === 0;
   const showFilteredEmpty = empty && !showFirstRunCta;
-  const pageCount = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 0;
 
   const clearFilters = () => {
     setSearchInput("");
@@ -206,93 +190,14 @@ export function Jobs() {
 
       {data && data.items.length > 0 && (
         <>
-          <div className="overflow-hidden rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Completed</TableHead>
-                  <TableHead>Route</TableHead>
-                  <TableHead>Cargo</TableHead>
-                  <TableHead className="text-right">Distance</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead className="text-right">Income</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.items.map((job) => (
-                  <TableRow
-                    key={job.id}
-                    className="hover:bg-accent/50 cursor-pointer"
-                    onClick={() => navigate(`/jobs/${job.id}`)}
-                  >
-                    <TableCell className="whitespace-nowrap">
-                      <div>{formatDate(job.completedAt)}</div>
-                      <div className="text-muted-foreground text-xs">
-                        {formatDuration(job.durationSec)}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="font-medium">
-                        {job.sourceCity} → {job.destCity}
-                      </div>
-                      <div className="text-muted-foreground text-xs">
-                        {job.sourceCompany} → {job.destCompany}
-                      </div>
-                    </TableCell>
-                    <TableCell>{job.cargoName}</TableCell>
-                    <TableCell className="whitespace-nowrap text-right">
-                      {formatKm(job.distanceKm)}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap items-center gap-1">
-                        <JobStatusBadge status={job.status} />
-                        {job.flagged && (
-                          <Badge
-                            data-testid="flagged-badge"
-                            title={job.flagReason ?? "Flagged"}
-                            className="border-transparent bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
-                          >
-                            Flagged
-                          </Badge>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap text-right">
-                      {formatCurrency(job.declaredIncome)}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-
-          <div className="text-muted-foreground flex items-center justify-between text-sm">
-            <div>
-              Showing {page * PAGE_SIZE + 1}–
-              {Math.min((page + 1) * PAGE_SIZE, data.total)} of {data.total}
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page === 0 || loading}
-                onClick={() => setPage((p) => Math.max(0, p - 1))}
-              >
-                Previous
-              </Button>
-              <div className="flex items-center px-2 text-sm">
-                Page {page + 1} of {pageCount}
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page + 1 >= pageCount || loading}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
+          <JobsTable jobs={data.items} onOpen={(id) => navigate(`/jobs/${id}`)} />
+          <Pager
+            page={page}
+            pageSize={PAGE_SIZE}
+            total={data.total}
+            loading={loading}
+            onPage={setPage}
+          />
         </>
       )}
     </div>
