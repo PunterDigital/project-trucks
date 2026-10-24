@@ -42,6 +42,8 @@ export function Settings() {
   const folder = settings?.ets2InstallPath ?? null;
   const [check, setCheck] = useState<PluginCheck | null>(null);
   const [installing, setInstalling] = useState(false);
+  // Which data action is running, so its button is disabled while the file is written.
+  const [busy, setBusy] = useState<"export" | "backup" | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +92,42 @@ export function Settings() {
     const value = draftPath.trim();
     setDraftPath(null);
     if (value !== (settings.ets2InstallPath ?? "")) await save({ ets2InstallPath: value });
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const exportCsv = async () => {
+    setBusy("export");
+    try {
+      const path = await api.pickSavePath({
+        defaultPath: `projecttrucks-jobs-${today}.csv`,
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+      });
+      if (!path) return;
+      const count = await api.exportJobsCsv(path);
+      toast.success(`Exported ${count} ${count === 1 ? "job" : "jobs"} to ${path}`);
+    } catch (e) {
+      toast.error(`Export failed: ${String(e)}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const backup = async () => {
+    setBusy("backup");
+    try {
+      const path = await api.pickSavePath({
+        defaultPath: `projecttrucks-backup-${today}.db`,
+        filters: [{ name: "SQLite database", extensions: ["db"] }],
+      });
+      if (!path) return;
+      await api.backupDatabase(path);
+      toast.success(`Backup saved to ${path}`);
+    } catch (e) {
+      toast.error(`Backup failed: ${String(e)}`);
+    } finally {
+      setBusy(null);
+    }
   };
 
   const detect = async () => {
@@ -204,6 +242,25 @@ export function Settings() {
         </div>
         <p className="text-sm text-muted-foreground">
           Distances are stored in kilometres; this only changes how they are shown.
+        </p>
+      </section>
+
+      <section className="space-y-3" aria-labelledby="data-heading">
+        <h3 id="data-heading" className="text-lg font-medium">
+          Your data
+        </h3>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="outline" disabled={busy !== null} onClick={exportCsv}>
+            Export jobs to CSV
+          </Button>
+          <Button type="button" variant="outline" disabled={busy !== null} onClick={backup}>
+            Back up database
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          The CSV has one row per job for spreadsheets. The backup is a copy of the whole SQLite
+          database (jobs, drives, trucks, settings); to restore it, close ProjectTrucks and copy
+          the file over projecttrucks.db in the app data folder.
         </p>
       </section>
     </div>

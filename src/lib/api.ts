@@ -4,6 +4,7 @@
 // the Rust backend.
 
 import { invoke } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
 
 import type {
   DashboardQuery,
@@ -78,4 +79,17 @@ export const api = {
 
   getTruckStats: (id: string, query?: DashboardQuery) =>
     invoke<TruckStats | null>("get_truck_stats", { id, query: query ?? null }),
+
+  // -- Export / backup ----
+  /** Native "Save as" dialog; `null` when the user cancels. */
+  pickSavePath: (options: {
+    defaultPath: string;
+    filters: { name: string; extensions: string[] }[];
+  }) => save(options),
+
+  /** Writes every job to a CSV file at `path`; returns the number of jobs written. */
+  exportJobsCsv: (path: string) => invoke<number>("export_jobs_csv", { path }),
+
+  /** Snapshots the database to `path` (VACUUM INTO). */
+  backupDatabase: (path: string) => invoke<void>("backup_database", { path }),
 };

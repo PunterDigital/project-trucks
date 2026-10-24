@@ -17,6 +17,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let handle = app.handle().clone();
             let pool = tauri::async_runtime::block_on(db::init_pool(&handle))?;
@@ -53,6 +54,8 @@ pub fn run() {
             commands::trucks::get_truck,
             commands::stats::get_dashboard_stats,
             commands::stats::get_truck_stats,
+            commands::export::export_jobs_csv,
+            commands::export::backup_database,
             telemetry::runner::get_telemetry_status,
             settings::get_settings,
             settings::update_settings,
