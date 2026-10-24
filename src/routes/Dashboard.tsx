@@ -3,7 +3,10 @@ import { Link, useNavigate } from "react-router-dom";
 import { Gauge } from "lucide-react";
 
 import { DistanceChart, OnTimeDonut } from "@/components/charts";
+import { EmptyState } from "@/components/EmptyState";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
+import { LoadError } from "@/components/LoadError";
+import { StatsPageSkeleton } from "@/components/Skeletons";
 import { StatCard, type StatDelta } from "@/components/StatCard";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -71,6 +74,7 @@ export function Dashboard() {
   const captured = useCaptureRefresh();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,7 +91,7 @@ export function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [captured]);
+  }, [captured, attempt]);
 
   return (
     <div className="space-y-6">
@@ -99,9 +103,13 @@ export function Dashboard() {
       </div>
 
       {error ? (
-        <p className="text-destructive text-sm">Error: {error}</p>
+        <LoadError
+          what="the dashboard"
+          message={error}
+          onRetry={() => setAttempt((a) => a + 1)}
+        />
       ) : !stats ? (
-        <p className="text-muted-foreground text-sm">Loading…</p>
+        <StatsPageSkeleton title={false} />
       ) : stats.lifetime.totalKm === 0 && stats.recentJobs.length === 0 ? (
         <EmptyDashboard />
       ) : (
@@ -113,22 +121,18 @@ export function Dashboard() {
 
 function EmptyDashboard() {
   return (
-    <div className="rounded-md border border-dashed p-10 text-center">
-      <Gauge className="text-muted-foreground mx-auto mb-3 h-8 w-8" />
-      <h3 className="text-lg font-medium">Nothing tracked yet</h3>
-      <p className="text-muted-foreground mx-auto mt-1 max-w-md text-sm">
-        Turn on auto-capture in Settings and drive in ETS2, or log a delivery by hand. Your
-        kilometres, deliveries and on-time rate will show up here.
-      </p>
-      <div className="mt-4 flex justify-center gap-2">
-        <Button asChild>
-          <Link to="/jobs/new">Log a job</Link>
-        </Button>
-        <Button variant="outline" asChild>
-          <Link to="/settings">Open settings</Link>
-        </Button>
-      </div>
-    </div>
+    <EmptyState
+      icon={Gauge}
+      title="Nothing tracked yet"
+      description="Turn on auto-capture and drive in ETS2, or log a delivery by hand. Your kilometres, deliveries and on-time rate will show up here."
+    >
+      <Button asChild>
+        <Link to="/jobs/new">Log a job</Link>
+      </Button>
+      <Button variant="outline" asChild>
+        <Link to="/settings">Turn on auto-capture</Link>
+      </Button>
+    </EmptyState>
   );
 }
 

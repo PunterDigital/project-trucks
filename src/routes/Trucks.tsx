@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { Truck as TruckIcon } from "lucide-react";
 
+import { EmptyState } from "@/components/EmptyState";
+import { LoadError } from "@/components/LoadError";
+import { TableSkeleton, TextSkeleton } from "@/components/Skeletons";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -20,6 +24,7 @@ export function Trucks() {
   const navigate = useNavigate();
   const [trucks, setTrucks] = useState<Truck[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const captured = useCaptureRefresh();
 
   useEffect(() => {
@@ -27,7 +32,9 @@ export function Trucks() {
     api
       .listTrucks()
       .then((t) => {
-        if (!cancelled) setTrucks(t);
+        if (cancelled) return;
+        setTrucks(t);
+        setError(null);
       })
       .catch((e: unknown) => {
         if (!cancelled) setError(String(e));
@@ -35,13 +42,17 @@ export function Trucks() {
     return () => {
       cancelled = true;
     };
-  }, [captured]);
+  }, [captured, attempt]);
 
   if (error) {
     return (
       <div className="space-y-4">
         <PageHeader count={null} />
-        <p className="text-destructive text-sm">Error: {error}</p>
+        <LoadError
+          what="your trucks"
+          message={error}
+          onRetry={() => setAttempt((a) => a + 1)}
+        />
       </div>
     );
   }
@@ -50,7 +61,7 @@ export function Trucks() {
     return (
       <div className="space-y-4">
         <PageHeader count={null} />
-        <p className="text-muted-foreground text-sm">Loading…</p>
+        <TableSkeleton rows={4} cols={4} />
       </div>
     );
   }
@@ -59,14 +70,18 @@ export function Trucks() {
     return (
       <div className="space-y-4">
         <PageHeader count={0} />
-        <div className="rounded-md border border-dashed p-10 text-center">
-          <TruckIcon className="text-muted-foreground mx-auto mb-3 h-8 w-8" />
-          <h3 className="text-lg font-medium">No trucks yet</h3>
-          <p className="text-muted-foreground mt-1 text-sm">
-            Log a job (or capture telemetry in M2) and the truck will appear
-            here.
-          </p>
-        </div>
+        <EmptyState
+          icon={TruckIcon}
+          title="No trucks yet"
+          description="A truck appears here with its first job or recorded drive, and keeps a running total of its kilometres."
+        >
+          <Button asChild>
+            <Link to="/jobs/new">Log a job</Link>
+          </Button>
+          <Button variant="outline" asChild>
+            <Link to="/settings">Turn on auto-capture</Link>
+          </Button>
+        </EmptyState>
       </div>
     );
   }
@@ -125,13 +140,13 @@ function PageHeader({ count }: { count: number | null }) {
   return (
     <div className="space-y-1">
       <h2 className="text-2xl font-semibold tracking-tight">Trucks</h2>
-      <p className="text-muted-foreground text-sm">
-        {count == null
-          ? "Loading…"
-          : count === 1
-            ? "1 truck driven"
-            : `${count} trucks driven`}
-      </p>
+      {count == null ? (
+        <TextSkeleton className="mt-1" />
+      ) : (
+        <p className="text-muted-foreground text-sm">
+          {count === 1 ? "1 truck driven" : `${count} trucks driven`}
+        </p>
+      )}
     </div>
   );
 }

@@ -3,7 +3,10 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, Truck as TruckIcon } from "lucide-react";
 
 import { DistanceChart } from "@/components/charts";
+import { EmptyState } from "@/components/EmptyState";
 import { JobsTable, Pager } from "@/components/JobsTable";
+import { LoadError } from "@/components/LoadError";
+import { StatsPageSkeleton, TableSkeleton } from "@/components/Skeletons";
 import { StatCard } from "@/components/StatCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -46,6 +49,7 @@ export function TruckDetail() {
   const { id } = useParams<{ id: string }>();
   const captured = useCaptureRefresh();
   const [load, setLoad] = useState<Load>({ kind: "loading" });
+  const [attempt, setAttempt] = useState(0);
 
   // A new id shows the loading state at once (during render, not in the effect), so the
   // previous truck's numbers are never shown under the new id.
@@ -70,7 +74,7 @@ export function TruckDetail() {
     return () => {
       cancelled = true;
     };
-  }, [id, captured]);
+  }, [id, captured, attempt]);
 
   return (
     <div className="space-y-6">
@@ -81,16 +85,15 @@ export function TruckDetail() {
         </Link>
       </Button>
 
-      {load.kind === "loading" && (
-        <>
-          <h2 className="text-2xl font-semibold tracking-tight">Truck</h2>
-          <p className="text-muted-foreground text-sm">Loading…</p>
-        </>
-      )}
+      {load.kind === "loading" && <StatsPageSkeleton />}
       {load.kind === "error" && (
         <>
           <h2 className="text-2xl font-semibold tracking-tight">Truck</h2>
-          <p className="text-destructive text-sm">Error: {load.message}</p>
+          <LoadError
+            what="this truck"
+            message={load.message}
+            onRetry={() => setAttempt((a) => a + 1)}
+          />
         </>
       )}
       {load.kind === "missing" && <MissingTruck />}
@@ -101,13 +104,15 @@ export function TruckDetail() {
 
 function MissingTruck() {
   return (
-    <div className="rounded-md border border-dashed p-10 text-center">
-      <TruckIcon className="text-muted-foreground mx-auto mb-3 h-8 w-8" />
-      <h2 className="text-lg font-medium">Truck not found</h2>
-      <p className="text-muted-foreground mt-1 text-sm">
-        There is no truck with this id. It may have been removed when its last job was deleted.
-      </p>
-    </div>
+    <EmptyState
+      icon={TruckIcon}
+      title="Truck not found"
+      description="There is no truck with this id. It may have been removed when its last job was deleted."
+    >
+      <Button variant="outline" asChild>
+        <Link to="/trucks">Back to trucks</Link>
+      </Button>
+    </EmptyState>
   );
 }
 
@@ -186,7 +191,8 @@ function TruckJobs({ truck, captured }: { truck: Truck; captured: number }) {
   const [page, setPage] = useState(0);
   const [data, setData] = useState<JobsPage | null>(null);
   const [settled, setSettled] = useState<Settled>(null);
-  const requestKey = `${truck.id}:${page}:${captured}`;
+  const [attempt, setAttempt] = useState(0);
+  const requestKey = `${truck.id}:${page}:${captured}:${attempt}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -215,12 +221,21 @@ function TruckJobs({ truck, captured }: { truck: Truck; captured: number }) {
 
   return (
     <div className="space-y-3" data-testid="truck-jobs">
-      {error && <p className="text-destructive text-sm">Error: {error}</p>}
-      {!data && loading && <p className="text-muted-foreground text-sm">Loading…</p>}
+      {error && (
+        <LoadError
+          what="this truck's jobs"
+          message={error}
+          onRetry={() => setAttempt((a) => a + 1)}
+          compact
+        />
+      )}
+      {!data && loading && <TableSkeleton rows={3} cols={6} />}
       {data && data.items.length === 0 && (
-        <div className="text-muted-foreground rounded-md border border-dashed p-10 text-center text-sm">
-          No jobs on this truck yet. Free-roam kilometres still count towards its distance.
-        </div>
+        <EmptyState
+          compact
+          title="No jobs on this truck yet"
+          description="Free-roam kilometres still count towards its distance."
+        />
       )}
       {data && data.items.length > 0 && (
         <>
@@ -262,7 +277,8 @@ function TruckSessions({ truck, captured }: { truck: Truck; captured: number }) 
   const [page, setPage] = useState(0);
   const [data, setData] = useState<SessionsPage | null>(null);
   const [settled, setSettled] = useState<Settled>(null);
-  const requestKey = `${truck.id}:${page}:${captured}`;
+  const [attempt, setAttempt] = useState(0);
+  const requestKey = `${truck.id}:${page}:${captured}:${attempt}`;
 
   useEffect(() => {
     let cancelled = false;
@@ -291,12 +307,21 @@ function TruckSessions({ truck, captured }: { truck: Truck; captured: number }) 
 
   return (
     <div className="space-y-3" data-testid="truck-sessions">
-      {error && <p className="text-destructive text-sm">Error: {error}</p>}
-      {!data && loading && <p className="text-muted-foreground text-sm">Loading…</p>}
+      {error && (
+        <LoadError
+          what="this truck's sessions"
+          message={error}
+          onRetry={() => setAttempt((a) => a + 1)}
+          compact
+        />
+      )}
+      {!data && loading && <TableSkeleton rows={3} cols={5} />}
       {data && data.items.length === 0 && (
-        <div className="text-muted-foreground rounded-md border border-dashed p-10 text-center text-sm">
-          No recorded driving sessions on this truck. Jobs logged by hand have no session.
-        </div>
+        <EmptyState
+          compact
+          title="No recorded driving sessions on this truck"
+          description="Jobs logged by hand have no session."
+        />
       )}
       {data && data.items.length > 0 && (
         <>

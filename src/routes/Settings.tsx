@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SettingsSkeleton } from "@/components/Skeletons";
 import { api } from "@/lib/api";
 import { updateSettings, useSettings } from "@/lib/settings";
 import { useTelemetryStatus, type TelemetryStatus } from "@/lib/useTelemetryEvents";
@@ -56,7 +57,7 @@ export function Settings() {
     };
   }, [folder]);
 
-  if (!settings) return null;
+  if (!settings) return <SettingsSkeleton />;
 
   // A result for a folder that is no longer the saved one is stale: show "Checking…" instead.
   const current = check && check.folder === folder ? check : null;

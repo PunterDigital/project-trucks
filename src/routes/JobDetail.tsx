@@ -1,9 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowLeft, FileQuestion, Loader2 } from "lucide-react";
 
+import { EmptyState } from "@/components/EmptyState";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
+import { LoadError } from "@/components/LoadError";
+import { JobDetailSkeleton } from "@/components/Skeletons";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -47,6 +50,7 @@ export function JobDetail() {
   const [flagged, setFlagged] = useState(false);
   const [flagReason, setFlagReason] = useState("");
   const [saveStatus, setSaveStatus] = useState<Status>("idle");
+  const [attempt, setAttempt] = useState(0);
 
   // What's currently on the server, so we can detect dirty state and bypass
   // the save loop on initial hydration.
@@ -92,7 +96,7 @@ export function JobDetail() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, attempt]);
 
   // Debounced save of the three editable fields.
   useEffect(() => {
@@ -142,7 +146,7 @@ export function JobDetail() {
     return (
       <div className="space-y-4">
         <BackLink />
-        <p className="text-muted-foreground text-sm">Loading…</p>
+        <JobDetailSkeleton />
       </div>
     );
   }
@@ -151,12 +155,15 @@ export function JobDetail() {
     return (
       <div className="space-y-4">
         <BackLink />
-        <div className="rounded-md border border-dashed p-10 text-center">
-          <h2 className="text-lg font-medium">Job not found</h2>
-          <p className="text-muted-foreground mt-1 text-sm">
-            It may have been deleted, or the id in the URL is mistyped.
-          </p>
-        </div>
+        <EmptyState
+          icon={FileQuestion}
+          title="Job not found"
+          description="It may have been deleted, or the id in the URL is mistyped."
+        >
+          <Button variant="outline" asChild>
+            <Link to="/jobs">Back to jobs</Link>
+          </Button>
+        </EmptyState>
       </div>
     );
   }
@@ -165,7 +172,11 @@ export function JobDetail() {
     return (
       <div className="space-y-4">
         <BackLink />
-        <p className="text-destructive text-sm">Error: {load.message}</p>
+        <LoadError
+          what="this job"
+          message={load.message}
+          onRetry={() => setAttempt((a) => a + 1)}
+        />
       </div>
     );
   }
