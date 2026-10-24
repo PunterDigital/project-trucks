@@ -112,6 +112,12 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   (with `Pager`). Tabs are radix via the `radix-ui` umbrella package (`src/components/ui/tabs.tsx`, written by hand, no
   new dependency). E2E: `e2e/truck-detail.spec.ts` seeds two trucks and checks the page against the Trucks list and the
   Dashboard; `data-testid="truck-jobs"` / `"truck-sessions"` / `"session-kind"`.
+- Export / backup (M3.3, `commands/export.rs`, Settings "Your data"): `export_jobs_csv(path)` writes RFC 4180 CSV
+  (`CSV_COLUMNS` order, CRLF, hand-rolled quoting, no csv crate) and returns the job count; `backup_database(path)` runs
+  `VACUUM INTO` on the live pool after deleting any existing target (VACUUM INTO refuses a non-empty file). The native
+  save dialog is `tauri-plugin-dialog` (crate + `@tauri-apps/plugin-dialog`, keep both on the same minor; capability
+  `dialog:allow-save`), wrapped as `api.pickSavePath`. Playwright can't drive the dialog, so `e2e/data.spec.ts` calls the
+  commands with paths in the test's `dataDir` and checks the files from Node (`node:sqlite` opens the backup).
 - First-launch prompt (`src/components/PluginPrompt.tsx`, shown under the header except on `/settings`): when the plugin
   is missing or outdated it offers Install/Update with the saved ETS2 folder. "Not now" stores the bundled DLL's SHA-256
   (`plugin_prompt_dismissed` setting, `PluginStatus.bundledSha`), so it only returns when the app ships a different plugin.
