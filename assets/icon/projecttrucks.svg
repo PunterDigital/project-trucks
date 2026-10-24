@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- ProjectTrucks app icon: source for `pnpm tauri icon assets/icon/projecttrucks.svg` -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f2937"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" fill="url(#bg)"/>
+  <!-- road -->
+  <rect x="96" y="744" width="832" height="40" rx="20" fill="#334155"/>
+  <rect x="160" y="760" width="96" height="8" rx="4" fill="#94a3b8"/>
+  <rect x="320" y="760" width="96" height="8" rx="4" fill="#94a3b8"/>
+  <rect x="480" y="760" width="96" height="8" rx="4" fill="#94a3b8"/>
+  <rect x="640" y="760" width="96" height="8" rx="4" fill="#94a3b8"/>
+  <!-- trailer -->
+  <rect x="128" y="300" width="500" height="340" rx="28" fill="#f59e0b"/>
+  <rect x="128" y="300" width="500" height="56" rx="28" fill="#fbbf24"/>
+  <!-- cab -->
+  <path d="M652 400 h150 q28 0 44 24 l66 100 q12 18 12 42 v48 q0 26 -26 26 h-246 z" fill="#fbbf24"/>
+  <path d="M700 424 h96 q16 0 24 12 l54 84 h-174 z" fill="#0f172a"/>
+  <!-- bumper + light -->
+  <rect x="892" y="612" width="36" height="28" rx="8" fill="#e2e8f0"/>
+  <circle cx="896" cy="580" r="14" fill="#fef3c7"/>
+  <!-- wheels -->
+  <circle cx="236" cy="664" r="76" fill="#0f172a"/>
+  <circle cx="236" cy="664" r="34" fill="#cbd5e1"/>
+  <circle cx="420" cy="664" r="76" fill="#0f172a"/>
+  <circle cx="420" cy="664" r="34" fill="#cbd5e1"/>
+  <circle cx="800" cy="664" r="76" fill="#0f172a"/>
+  <circle cx="800" cy="664" r="34" fill="#cbd5e1"/>
+</svg>

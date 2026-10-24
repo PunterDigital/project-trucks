@@ -134,3 +134,10 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   (`plugin_prompt_dismissed` setting, `PluginStatus.bundledSha`), so it only returns when the app ships a different plugin.
   The other E2E specs run with no ETS2 folder, so the prompt is on screen in them; don't give it a button named like
   "Install plugin" (`telemetry.spec.ts` selects that on the Settings page).
+- App icon (M4.1): the source is `assets/icon/projecttrucks.svg`. Regenerate every size with
+  `pnpm tauri icon assets/icon/projecttrucks.svg`, then delete the `android/` and `ios/` folders it drops into
+  `src-tauri/icons` (no mobile targets). `scripts/check-win-icon.ps1` compares the icon Windows extracts from an `.exe`
+  with `32x32.png` (System.Drawing can't decode the PNG-compressed frames in `tauri icon`'s `.ico`, and the NSIS
+  installer only carries the icon through `bundle.windows.nsis.installerIcon`); CI runs it on the release exe and the NSIS installer after `tauri build`, so the Tauri
+  default icon can't come back unnoticed. `bundle.publisher` / `longDescription` / `copyright` in `tauri.conf.json`
+  feed the installer's Add/Remove Programs entry and the exe's version resource.
