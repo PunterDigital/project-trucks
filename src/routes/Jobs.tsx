@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import type { DateRange } from "react-day-picker";
+import { ClipboardList, SearchX } from "lucide-react";
 
 import { DateRangePicker } from "@/components/DateRangePicker";
+import { EmptyState } from "@/components/EmptyState";
 import { JobsTable, Pager } from "@/components/JobsTable";
+import { LoadError } from "@/components/LoadError";
+import { TableSkeleton, TextSkeleton } from "@/components/Skeletons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -84,7 +88,8 @@ export function Jobs() {
     if (range?.to) f.to = endOfDayExclusiveIso(range.to);
     return f;
   }, [search, status, range, page]);
-  const requestKey = JSON.stringify(filter);
+  const [attempt, setAttempt] = useState(0);
+  const requestKey = `${JSON.stringify(filter)}#${attempt}`;
   const captured = useCaptureRefresh();
 
   useEffect(() => {
@@ -122,13 +127,13 @@ export function Jobs() {
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1">
           <h2 className="text-2xl font-semibold tracking-tight">Jobs</h2>
-          <p className="text-muted-foreground text-sm">
-            {data
-              ? `${data.total} ${data.total === 1 ? "delivery" : "deliveries"} logged`
-              : loading
-                ? "Loading…"
-                : ""}
-          </p>
+          {data ? (
+            <p className="text-muted-foreground text-sm">
+              {data.total} {data.total === 1 ? "delivery" : "deliveries"} logged
+            </p>
+          ) : loading ? (
+            <TextSkeleton className="mt-1" />
+          ) : null}
         </div>
         <Button asChild>
           <Link to="/jobs/new">Log a job</Link>
@@ -166,26 +171,42 @@ export function Jobs() {
         )}
       </div>
 
-      {error && <p className="text-sm text-destructive">Error: {error}</p>}
+      {error && (
+        <LoadError
+          what="your jobs"
+          message={error}
+          onRetry={() => setAttempt((a) => a + 1)}
+        />
+      )}
 
       {/* States */}
+      {!data && loading && <TableSkeleton rows={6} cols={6} />}
+
       {showFirstRunCta && (
-        <div className="space-y-3 rounded-md border border-dashed p-10 text-center">
-          <h3 className="text-lg font-medium">No jobs yet</h3>
-          <p className="text-muted-foreground text-sm">
-            Auto-capture will fill this in when M2 ships. For now, log one by
-            hand.
-          </p>
+        <EmptyState
+          icon={ClipboardList}
+          title="No jobs yet"
+          description="With auto-capture on, every ETS2 delivery logs itself while you drive. You can also log one by hand."
+        >
           <Button asChild>
             <Link to="/jobs/new">Log your first job manually</Link>
           </Button>
-        </div>
+          <Button variant="outline" asChild>
+            <Link to="/settings">Turn on auto-capture</Link>
+          </Button>
+        </EmptyState>
       )}
 
       {showFilteredEmpty && (
-        <div className="text-muted-foreground rounded-md border border-dashed p-10 text-center text-sm">
-          No jobs match these filters.
-        </div>
+        <EmptyState
+          icon={SearchX}
+          title="No jobs match these filters"
+          description="Try a different search, status or date range."
+        >
+          <Button variant="outline" onClick={clearFilters}>
+            Clear filters
+          </Button>
+        </EmptyState>
       )}
 
       {data && data.items.length > 0 && (

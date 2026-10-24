@@ -118,6 +118,17 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   save dialog is `tauri-plugin-dialog` (crate + `@tauri-apps/plugin-dialog`, keep both on the same minor; capability
   `dialog:allow-save`), wrapped as `api.pickSavePath`. Playwright can't drive the dialog, so `e2e/data.spec.ts` calls the
   commands with paths in the test's `dataDir` and checks the files from Node (`node:sqlite` opens the backup).
+- Loading / empty / error states (M3.4): no "Loading…" text anywhere. While a route's first request is in flight it shows
+  a shape from `src/components/Skeletons.tsx` (`TableSkeleton`, `StatsPageSkeleton`, `JobDetailSkeleton`, …; each root has
+  `data-testid="skeleton"` + `aria-busy`, so E2E waits for `getByTestId("skeleton")` to reach count 0). Every "nothing here"
+  box is `src/components/EmptyState.tsx` (`data-testid="empty-state"`, `compact` for a list inside a page) with its next
+  action as buttons: "Log a job" / "Log your first job manually" and "Turn on auto-capture" (→ `/settings`). A failed load
+  is `src/components/LoadError.tsx` (`role="alert"`, `data-testid="load-error"`, "Try again" bumps an `attempt` counter in
+  the effect deps or the request key); failures of user actions stay sonner toasts. `src/components/ErrorBoundary.tsx`
+  wraps the whole tree in `main.tsx`: a render error shows "Something went wrong" + the message + Reload
+  (`window.location.reload()`); its unit test (`ErrorBoundary.test.tsx`) runs in jsdom (`// @vitest-environment jsdom`,
+  `vitest.config.ts` includes `*.test.tsx`). `e2e/empty-states.spec.ts` covers the fresh-install states, not-found pages
+  and the filtered-empty "Clear filters" action.
 - First-launch prompt (`src/components/PluginPrompt.tsx`, shown under the header except on `/settings`): when the plugin
   is missing or outdated it offers Install/Update with the saved ETS2 folder. "Not now" stores the bundled DLL's SHA-256
   (`plugin_prompt_dismissed` setting, `PluginStatus.bundledSha`), so it only returns when the app ships a different plugin.
