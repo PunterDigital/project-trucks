@@ -3,6 +3,7 @@ pub mod db;
 pub mod plugin_installer;
 pub mod settings;
 pub mod telemetry;
+pub mod updater;
 
 use tauri::Manager;
 
@@ -27,7 +28,8 @@ pub fn run() {
             };
             app.manage(telemetry::runner::TelemetryStatus::default());
             tauri::async_runtime::block_on(settings::detect_on_first_run(&pool))?;
-            let auto_capture = tauri::async_runtime::block_on(settings::load(&pool))?.auto_capture;
+            let saved = tauri::async_runtime::block_on(settings::load(&pool))?;
+            let auto_capture = saved.auto_capture;
             let (capture_tx, capture_rx) = tokio::sync::watch::channel(auto_capture);
             app.manage(settings::AutoCapture(capture_tx));
             tauri::async_runtime::spawn(telemetry::runner::run(
@@ -37,6 +39,12 @@ pub fn run() {
                 capture_rx,
             ));
             app.manage(db::AppState { pool });
+            let updater = updater::Updater::new(&handle);
+            updater.clean_old_downloads();
+            app.manage(updater);
+            if saved.check_updates {
+                updater::spawn_launch_check(handle.clone());
+            }
             create_main_window(app)?;
             Ok(())
         })
@@ -62,6 +70,10 @@ pub fn run() {
             settings::detect_ets2,
             plugin_installer::telemetry_plugin_status,
             plugin_installer::install_telemetry_plugin,
+            updater::get_update_status,
+            updater::check_for_updates,
+            updater::install_update,
+            updater::open_release_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

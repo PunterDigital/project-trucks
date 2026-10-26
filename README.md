@@ -44,8 +44,12 @@ account and talks to nothing on the internet.
 3. Follow the installer. ProjectTrucks appears in the Start menu; the WebView2
    runtime it uses is already part of Windows 11 and the installer fetches it
    on Windows 10 if it is missing.
-4. Updating is the same: run the newer installer over the old install. Your
-   data stays where it is (see [Back up and restore](#back-up-and-restore-your-data)).
+4. Updating: from the version after v0.5.0 on, ProjectTrucks checks for a new
+   release when it starts and shows **Update to vX.Y.Z**. One click downloads
+   the installer, closes the app and reopens it on the new version (turn the
+   check off under Settings → Updates). Running the newer installer over the
+   old install by hand works too. Your data stays where it is (see
+   [Back up and restore](#back-up-and-restore-your-data)).
 
 v0.1.0 also shipped a macOS `.dmg` for manual logging; later versions don't,
 because the telemetry plugin only exists for Windows.

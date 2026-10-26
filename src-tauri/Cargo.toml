@@ -32,6 +32,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 sha2 = "0.11"
 tauri-plugin-dialog = "2"
+semver = "1"
+# One-click updates: the GitHub release check and the installer download. Windows' own TLS
+# (schannel) through native-tls; reqwest's default rustls needs aws-lc-rs to build.
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json", "http2", "system-proxy"] }
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Memory", "Win32_Security"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Memory", "Win32_Security", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

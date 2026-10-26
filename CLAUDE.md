@@ -141,3 +141,18 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   installer only carries the icon through `bundle.windows.nsis.installerIcon`); CI runs it on the release exe and the NSIS installer after `tauri build`, so the Tauri
   default icon can't come back unnoticed. `bundle.publisher` / `longDescription` / `copyright` in `tauri.conf.json`
   feed the installer's Add/Remove Programs entry and the exe's version resource.
+- One-click updates (#3354, `src-tauri/src/updater.rs`, `src/components/UpdateBanner.tsx`, Settings "Updates"): no Tauri
+  updater plugin (it needs an update-signing key as a repo secret). On launch (setting `check_updates`, default on) and
+  from "Check now" the Rust side reads GitHub's `releases/latest` JSON (reqwest with `native-tls`, i.e. schannel:
+  reqwest 0.13's default rustls pulls in aws-lc-rs), compares versions with `semver`, and the banner offers "Update to
+  vX.Y.Z". The click downloads the `_x64-setup.exe` asset, checks its size and GitHub's `digest` (`sha256:…`), starts
+  it with `ShellExecuteW` and `/P /R /UPDATE` (Tauri's NSIS template: passive, relaunch when done, update in place
+  without recreating shortcuts) and exits. Status changes go out as the `update:status` event (`src/lib/updates.ts`).
+  Test profiles (`PROJECTTRUCKS_DATA_DIR` set) never ask GitHub: they check only when `PROJECTTRUCKS_UPDATE_FEED` points
+  at a fake feed (ignored outside a test profile) and download into `<data dir>/update`; debug builds outside a test
+  profile don't check at all. `e2e/updates.spec.ts` serves the feed from Node and never lets an installer run (the
+  app would exit); it uses `launchApp` from `e2e/fixtures.ts` to restart the app on the same data dir. To check the
+  real launch by hand: `pnpm tauri build --no-bundle --config '{"version":"0.4.0"}'`, a temp data dir, and a fake feed
+  serving a stub exe that logs its arguments. A stub named `*setup.exe` needs an `asInvoker` manifest
+  (`rustc … -C link-arg=/MANIFEST:EMBED "-Clink-arg=/MANIFESTUAC:level='asInvoker' uiAccess='false'"`), or Windows'
+  installer detection (on by default) can demand elevation for the name alone. Never run a real release installer locally: `/P` replaces Shay's install.

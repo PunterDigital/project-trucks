@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { SettingsSkeleton } from "@/components/Skeletons";
 import { api } from "@/lib/api";
 import { updateSettings, useSettings } from "@/lib/settings";
+import { publishUpdateStatus, updateSummary, useUpdateStatus } from "@/lib/updates";
 import { useTelemetryStatus, type TelemetryStatus } from "@/lib/useTelemetryEvents";
 import type { PluginState, PluginStatus, SettingsPatch } from "@/types";
 
@@ -37,6 +38,8 @@ interface PluginCheck {
 export function Settings() {
   const settings = useSettings();
   const status = useTelemetryStatus();
+  const update = useUpdateStatus();
+  const [checking, setChecking] = useState(false);
   // The path field is edited freely and saved on blur or Enter; `null` = showing the saved value.
   const [draftPath, setDraftPath] = useState<string | null>(null);
 
@@ -96,6 +99,22 @@ export function Settings() {
   };
 
   const today = new Date().toISOString().slice(0, 10);
+
+  const checkNow = async () => {
+    setChecking(true);
+    try {
+      publishUpdateStatus(await api.checkForUpdates());
+    } catch (e) {
+      toast.error(`Could not check for updates: ${String(e)}`);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const toggleUpdates = async (on: boolean) => {
+    await save({ checkUpdates: on });
+    if (on && update?.state === "idle") await checkNow();
+  };
 
   const exportCsv = async () => {
     setBusy("export");
@@ -243,6 +262,46 @@ export function Settings() {
         </div>
         <p className="text-sm text-muted-foreground">
           Distances are stored in kilometres; this only changes how they are shown.
+        </p>
+      </section>
+
+      <section className="space-y-3" aria-labelledby="updates-heading">
+        <h3 id="updates-heading" className="text-lg font-medium">
+          Updates
+        </h3>
+        <div className="flex items-center gap-3">
+          <Checkbox
+            id="check-updates"
+            checked={settings.checkUpdates}
+            onCheckedChange={(checked) => toggleUpdates(checked === true)}
+          />
+          <Label htmlFor="check-updates">Check for updates</Label>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <span className="text-muted-foreground">
+            Version {update?.currentVersion ?? "…"}
+          </span>
+          <span data-testid="update-summary">{update ? updateSummary(update) : ""}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={
+              checking ||
+              !update ||
+              update.state === "disabled" ||
+              update.state === "checking" ||
+              update.state === "downloading" ||
+              update.state === "installing"
+            }
+            onClick={checkNow}
+          >
+            Check now
+          </Button>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Looks for a newer release on GitHub when ProjectTrucks starts. Updating downloads the
+          installer, closes the app and reopens it on the new version; your data stays as it is.
         </p>
       </section>
 
