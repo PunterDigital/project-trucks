@@ -58,15 +58,87 @@ async function appPage(browser: Browser, timeoutMs = 30_000): Promise<Page> {
   throw new Error("App window never loaded");
 }
 
+export interface RunningApp {
+  page: Page;
+  process: ChildProcess;
+  /** Console errors and uncaught exceptions seen since the page loaded. */
+  errors: string[];
+  /** Resolves with the exit code once the process has ended. */
+  exited: Promise<number | null>;
+  /** Closes the CDP connection and kills the app (if it is still running). */
+  close: () => Promise<void>;
+}
+
+/**
+ * Starts the app on a throwaway data dir and connects to its window. The `page` fixture uses
+ * this; specs that need to restart the app (or watch it exit) call it themselves.
+ */
+export async function launchApp(options: {
+  dataDir: string;
+  port: number;
+  env?: Record<string, string>;
+}): Promise<RunningApp> {
+  const app = spawn(resolveExe(), [], {
+    env: {
+      ...process.env,
+      ...options.env,
+      // The app also puts its WebView2 profile under this folder.
+      PROJECTTRUCKS_DATA_DIR: path.join(options.dataDir, "data"),
+      PROJECTTRUCKS_E2E_CDP_PORT: String(options.port),
+    },
+    stdio: "inherit",
+  });
+  const exited = new Promise<number | null>((resolve) => {
+    if (app.exitCode !== null) resolve(app.exitCode);
+    else app.once("exit", (code) => resolve(code));
+  });
+  const kill = async () => {
+    if (app.exitCode === null) {
+      app.kill();
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  };
+  try {
+    await waitForCdp(options.port, app);
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${options.port}`);
+    const page = await appPage(browser);
+    await page.waitForLoadState("domcontentloaded");
+    // Listen first, then reload, so errors from the initial load (CSP
+    // violations, failed fonts) are caught too.
+    const errors: string[] = [];
+    page.on("console", (msg) => {
+      if (msg.type() === "error") errors.push(msg.text());
+    });
+    page.on("pageerror", (err) => errors.push(err.message));
+    await page.reload({ waitUntil: "load" });
+    return {
+      page,
+      process: app,
+      errors,
+      exited,
+      close: async () => {
+        await browser.close().catch(() => {});
+        await kill();
+      },
+    };
+  } catch (e) {
+    await kill();
+    throw e;
+  }
+}
+
 type Fixtures = {
   page: Page;
   dataDir: string;
   /** Telemetry replay fixture (see src-tauri/src/telemetry/replay.rs); `null` = live reader. */
   replay: unknown;
+  /** Extra environment for the app (e.g. the fake update feed in `updates.spec.ts`). */
+  appEnv: Record<string, string>;
 };
 
 export const test = base.extend<Fixtures>({
   replay: [null, { option: true }],
+  appEnv: [{}, { option: true }],
 
   dataDir: async ({}, use) => {
     const dir = mkdtempSync(path.join(tmpdir(), "projecttrucks-e2e-"));
@@ -74,44 +146,20 @@ export const test = base.extend<Fixtures>({
     rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   },
 
-  page: async ({ dataDir, replay }, use, testInfo) => {
-    const port = 9300 + testInfo.workerIndex;
-    const replayEnv: Record<string, string> = {};
+  page: async ({ dataDir, replay, appEnv }, use, testInfo) => {
+    const env: Record<string, string> = { ...appEnv };
     if (replay) {
       const file = path.join(dataDir, "replay.json");
       writeFileSync(file, JSON.stringify(replay));
-      replayEnv.PROJECTTRUCKS_TELEMETRY_REPLAY = file;
-      replayEnv.PROJECTTRUCKS_TELEMETRY_REPLAY_INTERVAL_MS = "400";
+      env.PROJECTTRUCKS_TELEMETRY_REPLAY = file;
+      env.PROJECTTRUCKS_TELEMETRY_REPLAY_INTERVAL_MS = "400";
     }
-    const app = spawn(resolveExe(), [], {
-      env: {
-        ...process.env,
-        ...replayEnv,
-        // The app also puts its WebView2 profile under this folder.
-        PROJECTTRUCKS_DATA_DIR: path.join(dataDir, "data"),
-        PROJECTTRUCKS_E2E_CDP_PORT: String(port),
-      },
-      stdio: "inherit",
-    });
+    const app = await launchApp({ dataDir, port: 9300 + testInfo.workerIndex, env });
     try {
-      await waitForCdp(port, app);
-      const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
-      const page = await appPage(browser);
-      await page.waitForLoadState("domcontentloaded");
-      // Listen first, then reload, so errors from the initial load (CSP
-      // violations, failed fonts) are caught too.
-      const errors: string[] = [];
-      page.on("console", (msg) => {
-        if (msg.type() === "error") errors.push(msg.text());
-      });
-      page.on("pageerror", (err) => errors.push(err.message));
-      await page.reload({ waitUntil: "load" });
-      await use(page);
-      expect(errors, "console errors").toEqual([]);
-      await browser.close();
+      await use(app.page);
+      expect(app.errors, "console errors").toEqual([]);
     } finally {
-      app.kill();
-      await new Promise((r) => setTimeout(r, 500));
+      await app.close();
     }
   },
 });

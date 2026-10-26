@@ -164,6 +164,8 @@ export interface Settings {
   ets2InstallPath: string | null;
   units: "km" | "mi";
   pluginPromptDismissed: string | null;
+  /** Check GitHub for a newer release when the app starts (default on). */
+  checkUpdates: boolean;
 }
 
 export type PluginState = "noFolder" | "badFolder" | "notInstalled" | "outdated" | "installed";
@@ -180,6 +182,37 @@ export interface SettingsPatch {
   ets2InstallPath?: string;
   units?: "km" | "mi";
   pluginPromptDismissed?: string;
+  checkUpdates?: boolean;
+}
+
+// --- App updates (src-tauri/src/updater.rs) ------------------------------
+
+export type UpdateState =
+  | "disabled"
+  | "idle"
+  | "checking"
+  | "upToDate"
+  | "available"
+  | "downloading"
+  | "installing"
+  | "error";
+
+export interface LatestRelease {
+  /** Without the leading "v". */
+  version: string;
+  pageUrl: string;
+  /** The app can download and run the installer itself (Windows); otherwise link to the page. */
+  canInstall: boolean;
+}
+
+export interface UpdateStatus {
+  currentVersion: string;
+  state: UpdateState;
+  latest: LatestRelease | null;
+  received: number;
+  total: number;
+  /** The error for "error", the reason for "disabled". */
+  message: string | null;
 }
 
 // --- Dashboard (M3.1) ----------------------------------------------------

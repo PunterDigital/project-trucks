@@ -1,6 +1,7 @@
 //! App settings (the `settings` key/value table) and the Steam lookup that finds ETS2.
 //!
-//! Keys: `auto_capture` ("true"/"false", default off), `ets2_install_path` and `units` ("km"/"mi").
+//! Keys: `auto_capture` ("true"/"false", default off), `ets2_install_path`, `units` ("km"/"mi") and
+//! `check_updates` ("true"/"false", default on: check GitHub for a newer release on launch).
 //! Changing `auto_capture` flips the [`AutoCapture`] channel the telemetry task listens on, so
 //! polling starts or stops within a tick.
 
@@ -17,6 +18,7 @@ const KEY_AUTO_CAPTURE: &str = "auto_capture";
 const KEY_ETS2_PATH: &str = "ets2_install_path";
 const KEY_UNITS: &str = "units";
 const KEY_PLUGIN_PROMPT: &str = "plugin_prompt_dismissed";
+const KEY_CHECK_UPDATES: &str = "check_updates";
 
 /// Steam app id of Euro Truck Simulator 2.
 const ETS2_APP_ID: &str = "227300";
@@ -34,6 +36,8 @@ pub struct Settings {
     /// SHA-256 of the bundled plugin the user last said "Not now" to; the first-launch prompt
     /// stays quiet until the app ships a different plugin.
     pub plugin_prompt_dismissed: Option<String>,
+    /// Check for a newer release when the app starts (default on).
+    pub check_updates: bool,
 }
 
 /// Fields to change; absent ones are left alone. An empty `ets2_install_path` clears it.
@@ -44,6 +48,7 @@ pub struct SettingsPatch {
     pub ets2_install_path: Option<String>,
     pub units: Option<String>,
     pub plugin_prompt_dismissed: Option<String>,
+    pub check_updates: Option<bool>,
 }
 
 async fn get(pool: &SqlitePool, key: &str) -> Result<Option<String>, sqlx::Error> {
@@ -78,6 +83,7 @@ pub async fn load(pool: &SqlitePool) -> Result<Settings, sqlx::Error> {
         plugin_prompt_dismissed: get(pool, KEY_PLUGIN_PROMPT)
             .await?
             .filter(|p| !p.is_empty()),
+        check_updates: get(pool, KEY_CHECK_UPDATES).await?.as_deref() != Some("false"),
     })
 }
 
@@ -108,6 +114,11 @@ pub async fn apply(pool: &SqlitePool, patch: SettingsPatch) -> Result<Settings, 
     }
     if let Some(units) = &patch.units {
         put(pool, KEY_UNITS, units).await.map_err(io)?;
+    }
+    if let Some(on) = patch.check_updates {
+        put(pool, KEY_CHECK_UPDATES, if on { "true" } else { "false" })
+            .await
+            .map_err(io)?;
     }
     if let Some(sha) = &patch.plugin_prompt_dismissed {
         put(pool, KEY_PLUGIN_PROMPT, sha.trim()).await.map_err(io)?;
@@ -304,6 +315,7 @@ mod tests {
         assert_eq!(defaults.ets2_install_path, None);
         assert_eq!(defaults.units, "km");
         assert_eq!(defaults.plugin_prompt_dismissed, None);
+        assert!(defaults.check_updates);
 
         let saved = apply(
             &pool,
@@ -312,11 +324,13 @@ mod tests {
                 ets2_install_path: Some(r" D:\Games\ETS2 ".into()),
                 units: Some("mi".into()),
                 plugin_prompt_dismissed: Some("abc123".into()),
+                check_updates: Some(false),
             },
         )
         .await
         .unwrap();
         assert_eq!(saved.plugin_prompt_dismissed.as_deref(), Some("abc123"));
+        assert!(!saved.check_updates);
         assert!(saved.auto_capture);
         assert_eq!(saved.ets2_install_path.as_deref(), Some(r"D:\Games\ETS2"));
         assert_eq!(saved.units, "mi");
@@ -334,6 +348,7 @@ mod tests {
         assert!(cleared.auto_capture);
         assert_eq!(cleared.ets2_install_path, None);
         assert_eq!(cleared.plugin_prompt_dismissed.as_deref(), Some("abc123"));
+        assert!(!cleared.check_updates);
 
         assert!(apply(
             &pool,

@@ -24,6 +24,7 @@ import type {
   SettingsPatch,
   Truck,
   TruckStats,
+  UpdateStatus,
 } from "@/types";
 import type { TelemetryStatus } from "@/lib/useTelemetryEvents";
 
@@ -45,6 +46,16 @@ export const api = {
   telemetryPluginStatus: () => invoke<PluginStatus>("telemetry_plugin_status"),
 
   installTelemetryPlugin: () => invoke<PluginStatus>("install_telemetry_plugin"),
+
+  // -- App updates ----
+  getUpdateStatus: () => invoke<UpdateStatus>("get_update_status"),
+
+  checkForUpdates: () => invoke<UpdateStatus>("check_for_updates"),
+
+  /** Downloads the installer, starts it and exits the app (Windows). */
+  installUpdate: () => invoke<UpdateStatus>("install_update"),
+
+  openReleasePage: () => invoke<void>("open_release_page"),
 
   // -- Sessions ----
   createSession: (input: NewSession) =>
