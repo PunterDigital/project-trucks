@@ -4,6 +4,27 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.6.0 — 2026-11-02
+
+### Features
+- **One-click app updates**: the app checks GitHub for a newer release when it starts (Settings >
+  Updates, on by default) or when you click "Check now". When one is out, a banner offers
+  "Update to vX.Y.Z": the app downloads the installer, checks its size and SHA-256 against
+  GitHub's, runs it in passive mode and restarts on the new version. Updating from v0.5.0 to
+  v0.6.0 is still a manual install; later versions can update themselves.
+  ([#42](https://github.com/PunterDigital/project-trucks/pull/42))
+
+### Fixes
+- Security advisories in build-time tools (body-parser, undici via the shadcn CLI); nothing in the
+  app itself was affected. ([#41](https://github.com/PunterDigital/project-trucks/pull/41))
+
+### Internal
+- Dependency updates: Tauri 2.12.5 (crates and npm packages together), tokio, uuid, reqwest,
+  lucide-react, react-hook-form, react-router-dom, shadcn, typescript-eslint.
+  ([#43](https://github.com/PunterDigital/project-trucks/pull/43),
+  [#47](https://github.com/PunterDigital/project-trucks/pull/47),
+  [#48](https://github.com/PunterDigital/project-trucks/pull/48))
+
 ## v0.5.0 — 2026-10-24
 
 Milestone M4 (polish and release). This completes the original roadmap (M1–M4).
