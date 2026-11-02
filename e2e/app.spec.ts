@@ -35,6 +35,19 @@ test("log a job, see it in history and the fleet, then delete it", async ({ page
   await expect(page.getByText("Required")).toBeVisible();
   await page.getByLabel("Truck model").fill("S 730");
 
+  // A field refine (zod schema through @hookform/resolvers) shows its message.
+  await page.getByLabel("Distance (km)").fill("0");
+  await page.getByRole("button", { name: "Save job" }).click();
+  await expect(page.getByText("Must be > 0", { exact: true })).toBeVisible();
+  await page.getByLabel("Distance (km)").fill("412");
+
+  // The cross-field refine lands on "Completed at".
+  await page.getByLabel("Started at").fill("2026-01-01T12:00");
+  await page.getByLabel("Completed at").fill("2026-01-01T10:00");
+  await page.getByRole("button", { name: "Save job" }).click();
+  await expect(page.getByText("Must be after started at")).toBeVisible();
+  await page.getByLabel("Completed at").fill("2026-01-01T14:00");
+
   await page.getByRole("button", { name: "Save job" }).click();
   await expect(page.getByText("Job logged")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Jobs", exact: true })).toBeVisible();
