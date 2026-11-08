@@ -4,6 +4,16 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.6.1 — 2026-11-09
+
+Maintenance release: no new features or behaviour changes.
+
+### Internal
+- Build tooling moves to Vite 8, and form validation to @hookform/resolvers 6 (the job form's
+  checks work as before). ([#50](https://github.com/PunterDigital/project-trucks/pull/50))
+- Dependency updates: lucide-react 1.66, eslint 10.14.
+  ([#51](https://github.com/PunterDigital/project-trucks/pull/51))
+
 ## v0.6.0 — 2026-11-02
 
 ### Features
