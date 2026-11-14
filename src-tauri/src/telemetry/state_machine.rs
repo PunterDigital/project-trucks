@@ -57,8 +57,9 @@ impl Default for Config {
     }
 }
 
-/// A job the machine is tracking, with where it started.
-#[derive(Debug, Clone, PartialEq)]
+/// A job the machine is tracking, with where it started. Saved to SQLite while it runs (#4730), so
+/// a restart mid-delivery carries on with the same start.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct JobInProgress {
     pub job: JobSnapshot,
     pub truck_make: Option<String>,
@@ -154,6 +155,8 @@ pub struct StateMachine {
     cleared_route_samples: u8,
     /// A delivered job whose fields the plugin left in the frame (owned trailer): not a new job.
     delivered: Option<JobSnapshot>,
+    /// `job` came from a saved state and still has to match the game's first unpaused frame.
+    restored: bool,
 }
 
 impl Default for StateMachine {
@@ -173,7 +176,22 @@ impl StateMachine {
             near_destination: false,
             cleared_route_samples: 0,
             delivered: None,
+            restored: false,
         }
+    }
+
+    /// Carry on from a saved state (#4730): the job that was running when the app stopped, and the
+    /// delivered job still left in the frame. The job is kept only if the game's first unpaused
+    /// frame shows the same job; otherwise it is dropped and whatever the game shows starts fresh.
+    pub fn restore(&mut self, job: Option<JobInProgress>, delivered: Option<JobSnapshot>) {
+        self.restored = job.is_some();
+        self.job = job;
+        self.delivered = delivered;
+    }
+
+    /// The delivered job still in the frame (see [`StateMachine::restore`]).
+    pub fn delivered_job(&self) -> Option<&JobSnapshot> {
+        self.delivered.as_ref()
     }
 
     pub fn state(&self) -> DrivingState {
@@ -225,6 +243,12 @@ impl StateMachine {
         }
 
         let job_now = self.job_in_frame(s);
+        if std::mem::take(&mut self.restored)
+            && !job_now.is_some_and(|j| self.job.as_ref().is_some_and(|a| a.same_job(j)))
+        {
+            // The saved job isn't the one the game is on: it ended while the app was closed.
+            self.job = None;
+        }
         if self.arrived(job_now) {
             // Handed in with the trailer still hitched (#4734): finish it, then drive on without it.
             let (status, job_event) = self.finish_job(at, s.truck.odometer_km, prev_paused);
@@ -1401,6 +1425,85 @@ mod tests {
         assert!(m.active_job().is_none());
         let ev = feed(&mut m, 3_460, &routed(301.0, 50.0, 0.0));
         assert_eq!(names(&ev), ["start:free"]); // the stale job isn't a new delivery
+        assert!(m.active_job().is_none());
+    }
+
+    // ---- restoring a saved job (#4730) ------------------------------------------------------
+
+    /// The job `on_a_job()` was tracking, as the app would have saved it.
+    fn saved_job() -> JobInProgress {
+        on_a_job().active_job().unwrap().clone()
+    }
+
+    #[test]
+    fn a_restored_job_carries_on_with_its_original_start() {
+        let mut m = machine();
+        m.restore(Some(saved_job()), None);
+        feed(&mut m, 5_000, &parked_hauling(180.0));
+        let ev = feed(&mut m, 5_001, &hauling(181.0));
+        assert_eq!(names(&ev), ["start:job"]); // resumed: no second JobStarted
+        let job = m.active_job().unwrap();
+        assert_eq!(job.start_odometer_km, 120.0);
+        assert_eq!(job.started_at, t(60));
+        feed(&mut m, 6_000, &hauling(320.0));
+        let ev = feed(&mut m, 6_001, &driving(320.0));
+        let Event::JobCompleted {
+            job,
+            end_odometer_km,
+            ..
+        } = &ev[1]
+        else {
+            panic!("{ev:?}")
+        };
+        assert_eq!(*end_odometer_km - job.start_odometer_km, 200.0);
+    }
+
+    #[test]
+    fn a_restored_job_is_dropped_when_the_game_shows_a_different_one() {
+        let mut m = machine();
+        m.restore(Some(saved_job()), None);
+        let berlin = Some(job("Berlin", 6_500));
+        let ev = feed(&mut m, 5_000, &snap(400.0, 0.0, berlin.clone()));
+        assert!(
+            ev.is_empty(),
+            "no cancel or delivery for the old job: {ev:?}"
+        );
+        assert!(m.active_job().is_none());
+        let ev = feed(&mut m, 5_001, &snap(400.5, 40.0, berlin));
+        assert_eq!(names(&ev), ["job-started", "start:job"]);
+        assert_eq!(m.active_job().unwrap().start_odometer_km, 400.5);
+    }
+
+    #[test]
+    fn a_restored_job_is_dropped_when_the_game_shows_no_job() {
+        let mut m = machine();
+        m.restore(Some(saved_job()), None);
+        assert!(feed(&mut m, 5_000, &parked(400.0)).is_empty());
+        assert!(m.active_job().is_none());
+    }
+
+    #[test]
+    fn paused_frames_and_no_frames_keep_the_restored_job_waiting() {
+        let mut m = machine();
+        m.restore(Some(saved_job()), None);
+        m.step(t(5_000), None);
+        let mut menu = parked(0.0); // main menu: paused, nothing loaded
+        menu.paused = true;
+        m.step(t(5_001), Some(&menu));
+        assert!(m.active_job().is_some());
+        feed(&mut m, 5_002, &parked_hauling(180.0));
+        assert_eq!(m.active_job().unwrap().start_odometer_km, 120.0);
+    }
+
+    #[test]
+    fn a_restored_delivered_job_is_not_picked_up_again() {
+        let mut m = machine();
+        let mut stale = job("Paris", 4_000);
+        stale.route_distance_km = 0.0;
+        m.restore(None, Some(stale.clone()));
+        feed(&mut m, 0, &snap(300.0, 0.0, Some(stale.clone())));
+        let ev = feed(&mut m, 1, &snap(301.0, 60.0, Some(stale)));
+        assert_eq!(names(&ev), ["start:free"]);
         assert!(m.active_job().is_none());
     }
 

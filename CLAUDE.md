@@ -144,8 +144,14 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   when its route advisor was under `Config::arrival_km` (2 km) and then reads 0 on two unpaused samples in a row, and
   ignores that stale job (`delivered`) until the frame shows a different one or none. Within 2 km a vanished job is
   also delivered even if paused (the results screen pauses the game). A disconnect resets the arrival tracking, since
-  a reloaded game can show an empty route for a moment. E2E: `e2e/owned-trailer.spec.ts`. The finished-job memory is
-  in RAM only: an app restart right after an owned-trailer delivery picks the stale job up as new again (#4730).
+  a reloaded game can show an empty route for a moment. E2E: `e2e/owned-trailer.spec.ts`.
+- Restart mid-delivery (#4730): the pipeline saves the state machine's active job (`JobInProgress`, serde) and the
+  delivered-but-still-in-the-frame job as JSON in the settings table (`telemetry_active_job`,
+  `telemetry_delivered_job`) whenever they change, and `Pipeline::restored` loads them when the runner starts. A
+  restored job is kept only if the game's first **unpaused** frame shows the same job (`same_job`); otherwise it's
+  dropped silently (no row: it ended while the app was closed) and the frame's job starts fresh. Switching
+  auto-capture off still drops the drive in progress and clears both keys (`Pipeline::forget`). A bad saved value is
+  ignored with a warning. E2E: `e2e/restart-mid-job.spec.ts` launches twice on one data dir with two replays.
 - Dashboard (M3.1, `src/routes/Dashboard.tsx`, `commands/stats.rs`): `get_dashboard_stats` takes the viewer's UTC offset
   (`-getTimezoneOffset()`), so "this month" and the 30-day series follow local days; tests pin `now` through
   `DashboardQuery`. Distances follow the rollup rules (sessions carry recorded km, a manual job its own; cancelled

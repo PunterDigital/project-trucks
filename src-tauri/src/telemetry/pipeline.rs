@@ -11,7 +11,7 @@ use chrono::NaiveDateTime;
 use sqlx::SqlitePool;
 
 use super::state_machine::{Config, DrivingState, Event, JobInProgress, StateMachine};
-use super::TelemetrySnapshot;
+use super::{JobSnapshot, TelemetrySnapshot};
 use crate::commands::jobs::insert_job_row;
 use crate::commands::sessions::insert_session_row;
 use crate::db::models::{
@@ -22,6 +22,14 @@ use crate::db::rollups::recompute_truck;
 /// Sessions shorter than this are dropped (a free-roam session opened right after a delivery and
 /// parked has no distance worth keeping). A session that belongs to a completed job is always kept.
 pub const MIN_SESSION_KM: f64 = 0.05;
+
+/// Settings keys holding the job in progress and the delivered job still in the frame (#4730), as
+/// JSON. Written whenever they change, so a restart mid-delivery carries on.
+pub const KEY_ACTIVE_JOB: &str = "telemetry_active_job";
+pub const KEY_DELIVERED_JOB: &str = "telemetry_delivered_job";
+
+/// What is saved between runs.
+type Saved = (Option<JobInProgress>, Option<JobSnapshot>);
 
 /// A row the pipeline wrote.
 #[derive(Debug, Clone)]
@@ -35,6 +43,8 @@ pub struct Pipeline {
     /// Session row of a delivery that was parked (not finished), so a `JobCompleted` that arrives
     /// without its own `SessionEnded` can still point at it.
     parked_job_session: Option<String>,
+    /// What was last saved (or loaded), so unchanged state isn't written every tick.
+    saved: Saved,
 }
 
 impl Default for Pipeline {
@@ -51,7 +61,33 @@ impl Pipeline {
         Self {
             machine: StateMachine::new(cfg),
             parked_job_session: None,
+            saved: (None, None),
         }
+    }
+
+    /// A pipeline that carries on from the job saved by the last run, if any. A saved value that
+    /// can't be read is ignored (the next tick overwrites it).
+    pub async fn restored(pool: &SqlitePool) -> Self {
+        let mut p = Self::default();
+        let job = load::<JobInProgress>(pool, KEY_ACTIVE_JOB).await;
+        let delivered = load::<JobSnapshot>(pool, KEY_DELIVERED_JOB).await;
+        if job.is_some() {
+            tracing::info!("resuming the job in progress from the last run");
+        }
+        p.machine.restore(job.clone(), delivered.clone());
+        p.saved = (job, delivered);
+        p
+    }
+
+    /// Forget the saved job (auto-capture switched off drops the drive in progress).
+    pub async fn forget(pool: &SqlitePool) -> Result<()> {
+        sqlx::query("DELETE FROM settings WHERE key IN (?, ?)")
+            .bind(KEY_ACTIVE_JOB)
+            .bind(KEY_DELIVERED_JOB)
+            .execute(pool)
+            .await
+            .context("clear the saved job")?;
+        Ok(())
     }
 
     pub fn state(&self) -> DrivingState {
@@ -72,7 +108,24 @@ impl Pipeline {
     ) -> Result<Vec<Created>> {
         let events = self.machine.step(at, frame);
         let game_time = frame.and_then(|f| f.game_time);
-        self.apply(pool, events, game_time).await
+        let created = self.apply(pool, events, game_time).await?;
+        self.save(pool).await?;
+        Ok(created)
+    }
+
+    /// Save the job in progress and the delivered job when either changed.
+    async fn save(&mut self, pool: &SqlitePool) -> Result<()> {
+        let now: Saved = (
+            self.machine.active_job().cloned(),
+            self.machine.delivered_job().cloned(),
+        );
+        if now == self.saved {
+            return Ok(());
+        }
+        store(pool, KEY_ACTIVE_JOB, now.0.as_ref()).await?;
+        store(pool, KEY_DELIVERED_JOB, now.1.as_ref()).await?;
+        self.saved = now;
+        Ok(())
     }
 
     /// Write the rows for `events`. `game_time` is the in-game clock of the sample that produced
@@ -240,6 +293,34 @@ impl Pipeline {
         }
         Ok(())
     }
+}
+
+async fn load<T: serde::de::DeserializeOwned>(pool: &SqlitePool, key: &str) -> Option<T> {
+    let raw = match crate::settings::get(pool, key).await {
+        Ok(v) => v?,
+        Err(e) => {
+            tracing::warn!(error = %e, key, "could not read the saved job");
+            return None;
+        }
+    };
+    serde_json::from_str(&raw)
+        .inspect_err(|e| tracing::warn!(error = %e, key, "ignoring an unreadable saved job"))
+        .ok()
+}
+
+async fn store<T: serde::Serialize>(pool: &SqlitePool, key: &str, value: Option<&T>) -> Result<()> {
+    match value {
+        Some(v) => {
+            let json = serde_json::to_string(v).context("serialise the job")?;
+            crate::settings::put(pool, key, &json).await
+        }
+        None => sqlx::query("DELETE FROM settings WHERE key = ?")
+            .bind(key)
+            .execute(pool)
+            .await
+            .map(|_| ()),
+    }
+    .context("save the job in progress")
 }
 
 fn new_job(
@@ -594,5 +675,157 @@ mod tests {
         let j = jobs(&created);
         assert_eq!((s.len(), j.len()), (1, 1));
         assert_eq!(j[0].session_id.as_deref(), Some(s[0].id.as_str()));
+    }
+
+    // ---- restart mid-delivery (#4730) ---------------------------------------------------------
+
+    #[tokio::test]
+    async fn a_restart_mid_delivery_keeps_the_whole_job() {
+        let pool = test_pool().await;
+        let mut p = Pipeline::restored(&pool).await;
+        feed(
+            &mut p,
+            &pool,
+            vec![
+                (0, Some(snap(100.0, 0.0, None))),
+                (1, Some(snap(101.0, 70.0, None))),
+                (2, Some(snap(102.0, 70.0, Some(job())))), // picked up at 102 km
+                (3, Some(snap(110.0, 70.0, Some(job())))),
+            ],
+        )
+        .await;
+        assert!(crate::settings::get(&pool, KEY_ACTIVE_JOB)
+            .await
+            .unwrap()
+            .is_some());
+        drop(p); // the app closes (an update, say) mid-delivery
+
+        let mut p = Pipeline::restored(&pool).await;
+        assert_eq!(p.active_job().unwrap().start_odometer_km, 102.0);
+        let created = feed(
+            &mut p,
+            &pool,
+            vec![
+                (600, Some(snap(110.0, 0.0, Some(job())))),
+                (601, Some(snap(111.0, 70.0, Some(job())))),
+                (602, Some(snap(130.0, 70.0, Some(job())))),
+                (603, Some(snap(130.0, 10.0, None))), // delivered
+            ],
+        )
+        .await;
+        let j = jobs(&created);
+        assert_eq!(j.len(), 1);
+        assert_eq!(j[0].distance_km, 28.0); // 102 -> 130, the km before the restart included
+        assert_eq!(j[0].status, JobStatus::Delivered);
+        assert!(crate::settings::get(&pool, KEY_ACTIVE_JOB)
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn a_saved_job_the_game_no_longer_shows_is_dropped_without_a_row() {
+        let pool = test_pool().await;
+        let mut p = Pipeline::restored(&pool).await;
+        feed(
+            &mut p,
+            &pool,
+            vec![
+                (0, Some(snap(100.0, 0.0, None))),
+                (1, Some(snap(101.0, 70.0, Some(job())))),
+                (2, Some(snap(110.0, 70.0, Some(job())))),
+            ],
+        )
+        .await;
+        drop(p);
+
+        let mut other = job();
+        other.destination_city = Some("Lyon".into());
+        other.income = 9_000;
+        let mut p = Pipeline::restored(&pool).await;
+        let created = feed(
+            &mut p,
+            &pool,
+            vec![
+                (600, Some(snap(500.0, 0.0, Some(other.clone())))),
+                (601, Some(snap(501.0, 70.0, Some(other.clone())))),
+            ],
+        )
+        .await;
+        assert!(jobs(&created).is_empty());
+        assert_eq!(
+            p.active_job().unwrap().job.destination_city.as_deref(),
+            Some("Lyon")
+        );
+        assert_eq!(p.active_job().unwrap().start_odometer_km, 501.0);
+    }
+
+    #[tokio::test]
+    async fn the_delivered_owned_trailer_job_is_remembered_across_a_restart() {
+        let pool = test_pool().await;
+        let routed = |route: f32| {
+            let mut j = job();
+            j.route_distance_km = route;
+            j
+        };
+        let mut p = Pipeline::restored(&pool).await;
+        let created = feed(
+            &mut p,
+            &pool,
+            vec![
+                (0, Some(snap(100.0, 0.0, None))),
+                (1, Some(snap(101.0, 70.0, Some(routed(20.0))))),
+                (2, Some(snap(120.0, 20.0, Some(routed(0.4))))),
+                (3, Some(snap(120.0, 0.0, Some(routed(0.0))))),
+                (4, Some(snap(120.0, 0.0, Some(routed(0.0))))), // handed in, trailer still hitched
+            ],
+        )
+        .await;
+        assert_eq!(jobs(&created).len(), 1);
+        drop(p);
+
+        let mut p = Pipeline::restored(&pool).await;
+        let created = feed(
+            &mut p,
+            &pool,
+            vec![
+                (600, Some(snap(120.0, 0.0, Some(routed(0.0))))),
+                (601, Some(snap(121.0, 60.0, Some(routed(0.0))))),
+            ],
+        )
+        .await;
+        assert!(jobs(&created).is_empty());
+        assert!(p.active_job().is_none());
+        assert_eq!(p.state(), DrivingState::FreeRoam);
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_saved_job_is_ignored() {
+        let pool = test_pool().await;
+        crate::settings::put(&pool, KEY_ACTIVE_JOB, "{not json")
+            .await
+            .unwrap();
+        let p = Pipeline::restored(&pool).await;
+        assert!(p.active_job().is_none());
+    }
+
+    #[tokio::test]
+    async fn forget_clears_the_saved_job() {
+        let pool = test_pool().await;
+        crate::settings::put(&pool, KEY_ACTIVE_JOB, "{}")
+            .await
+            .unwrap();
+        crate::settings::put(&pool, KEY_DELIVERED_JOB, "{}")
+            .await
+            .unwrap();
+        Pipeline::forget(&pool).await.unwrap();
+        assert!(crate::settings::get(&pool, KEY_ACTIVE_JOB)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(crate::settings::get(&pool, KEY_DELIVERED_JOB)
+            .await
+            .unwrap()
+            .is_none());
     }
 }
