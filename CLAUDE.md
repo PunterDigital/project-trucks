@@ -42,7 +42,11 @@ data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
 ## CI / release
 
 - `ci.yml`: ubuntu frontend typecheck/lint/unit tests/build; windows fmt/clippy/test, installers, E2E against the release
-  binary. Both job names are required checks on `main`: keep them unchanged.
+  binary. Both job names are required checks on `main`: keep them unchanged. A `changes` job runs
+  `scripts/is-version-bump.mjs <base> <head>` (merge-base diff): when only version lines in `package.json`,
+  `tauri.conf.json`, `Cargo.toml`, the app's own `Cargo.lock` entry and `CHANGELOG.md` change, the Windows job is
+  skipped (Shay, Nov 14: release bumps shouldn't burn a full Windows run; the tag's `release.yml` builds anyway).
+  Keep release PRs to exactly those edits, or they get the full run.
 - `release.yml` on `v*` tags: creates the release with generated notes, `tauri-action` (v1) uploads the
   Windows `_x64-setup.exe` / `.msi`, then a job verifies both exist. tauri-action v1 rewrites the name and body
   of an existing release from its inputs, so the first job passes the generated notes on as `releaseBody`.

@@ -32,8 +32,29 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  changes:
+    # Release bumps (`chore(release)`: version lines + CHANGELOG only) don't need
+    # the ~13 minute Windows job: the tag's release workflow builds and checks the
+    # installers anyway. A job skipped by `if:` still satisfies the required check.
+    name: Detect release bump
+    runs-on: ubuntu-latest
+    outputs:
+      version_only: ${{ steps.check.outputs.version_only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: check
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: echo "version_only=$(node scripts/is-version-bump.mjs "$BASE" "$HEAD")" | tee -a "$GITHUB_OUTPUT"
+
   windows:
+    # The name is a required status check on main: keep it unchanged.
     name: Windows (Rust checks, build, E2E)
+    needs: changes
+    if: needs.changes.outputs.version_only != 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
