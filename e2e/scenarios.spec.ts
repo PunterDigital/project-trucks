@@ -147,7 +147,7 @@ test.describe("auto-capture over a whole shift", () => {
   }) => {
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await page.getByLabel("Record drives and deliveries from ETS2 automatically").click();
-    await expect(page.getByTestId("auto-capture-pill")).toHaveText("Auto-capture: on");
+    await expect(page.getByTestId("auto-capture-pill")).toHaveAttribute("data-capture", "on");
     await page.getByRole("link", { name: "Jobs", exact: true }).click();
 
     const rowFor = (city: string) => page.getByRole("row").filter({ hasText: city });

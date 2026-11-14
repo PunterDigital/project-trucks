@@ -71,7 +71,7 @@ test("the job in progress card follows the delivery and goes away when it is don
 
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await page.getByLabel("Record drives and deliveries from ETS2 automatically").click();
-  await expect(page.getByTestId("auto-capture-pill")).toHaveText("Auto-capture: on");
+  await expect(page.getByTestId("auto-capture-pill")).toHaveAttribute("data-capture", "on");
   await page.getByRole("link", { name: "Dashboard", exact: true }).click();
 
   const card = page.getByTestId("job-in-progress");
