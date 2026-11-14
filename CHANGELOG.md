@@ -4,6 +4,19 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.8.0 — 2026-11-14
+
+### Features
+- **ProjectTrucks Hub.** Link the app to an account on the ProjectTrucks Hub
+  (https://project-trucks.shaypunter.co.uk) in Settings → ProjectTrucks Hub: click Link account, approve the
+  code on the website, and your new jobs sync to your public driver profile by themselves (edits and deletes
+  follow). Jobs from before linking only upload if you click Sync history, and job notes never leave your PC.
+  The sign-in for the Hub is kept in Windows Credential Manager. Unlink any time, in the app or on the website.
+  ([#69](https://github.com/PunterDigital/project-trucks/pull/69))
+- **On the road, live.** While linked, the Hub shows what you're driving right now (truck, cargo, route and
+  progress) on your profile and your company's page, and stops when you close the game or turn auto-capture
+  off. ([#69](https://github.com/PunterDigital/project-trucks/pull/69))
+
 ## v0.7.0 — 2026-11-14
 
 ### Features
