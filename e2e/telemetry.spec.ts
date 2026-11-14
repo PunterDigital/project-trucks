@@ -82,7 +82,7 @@ test.describe("auto-capture from a replayed drive", () => {
     // Auto-capture is off by default: nothing is recorded until it is switched on.
     await page.getByRole("link", { name: "Settings", exact: true }).click();
     await page.getByLabel("Record drives and deliveries from ETS2 automatically").click();
-    await expect(page.getByTestId("auto-capture-pill")).toHaveText("Auto-capture: on");
+    await expect(page.getByTestId("auto-capture-pill")).toHaveAttribute("data-capture", "on");
 
     // The replay takes a few seconds, so this page is open when the job is written: the
     // `job:created` event has to refetch it.
@@ -137,7 +137,9 @@ test.describe("settings", () => {
     const badge = page.getByTestId("telemetry-badge");
     const toggle = page.getByLabel("Record drives and deliveries from ETS2 automatically");
 
-    await expect(pill).toHaveText("Auto-capture: off");
+    await expect(pill).toHaveAttribute("data-capture", "off");
+    await expect(pill).toHaveAttribute("data-state", "off");
+    await expect(pill.getByTestId("tracking-label")).toHaveText("Not tracking");
     await expect(toggle).not.toBeChecked();
     await expect(badge).toHaveText("Not connected");
     // Off means off: well past the replay's few samples, still nothing connected.
@@ -145,11 +147,15 @@ test.describe("settings", () => {
     await expect(badge).toHaveText("Not connected");
 
     await toggle.click();
-    await expect(pill).toHaveText("Auto-capture: on");
+    await expect(pill).toHaveAttribute("data-capture", "on");
     await expect(badge).toHaveText("Connected, parked", { timeout: 2500 });
+    // The header indicator (#4621) follows the live status too.
+    await expect(pill).toHaveAttribute("data-state", "tracking");
+    await expect(pill.getByTestId("tracking-label")).toHaveText("Tracking");
+    await expect(pill).toHaveAttribute("title", "Game connected, parked");
 
     await toggle.click();
-    await expect(pill).toHaveText("Auto-capture: off");
+    await expect(pill).toHaveAttribute("data-capture", "off");
     await expect(badge).toHaveText("Not connected", { timeout: 2500 });
   });
 
@@ -297,5 +303,34 @@ test.describe("first-launch plugin prompt", () => {
     } finally {
       rmSync(game, { recursive: true, force: true });
     }
+  });
+});
+
+// Auto-capture on, but the game never sends a frame (#4621).
+const silentReplay = {
+  samples: Array.from({ length: 30 }, (_, t) => ({ t, snapshot: null })),
+};
+
+test.describe("telemetry indicator", () => {
+  test.use({ replay: silentReplay });
+
+  test("shows Waiting for ETS2 while auto-capture is on and the game is quiet, and opens Settings", async ({
+    page,
+  }) => {
+    const pill = page.getByTestId("auto-capture-pill");
+    await expect(pill).toHaveAttribute("data-state", "off");
+
+    // The indicator is a link to Settings.
+    await pill.click();
+    const toggle = page.getByLabel("Record drives and deliveries from ETS2 automatically");
+    await toggle.click();
+    await expect(pill).toHaveAttribute("data-state", "waiting");
+    await expect(pill.getByTestId("tracking-label")).toHaveText("Waiting for ETS2");
+    await expect(pill).toHaveAttribute("title", /Start ETS2/);
+
+    // Visible on every page, and it stays waiting while nothing arrives.
+    await page.getByRole("link", { name: "Jobs", exact: true }).click();
+    await page.waitForTimeout(1500);
+    await expect(pill).toHaveAttribute("data-state", "waiting");
   });
 });
