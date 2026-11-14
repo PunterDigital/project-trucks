@@ -77,6 +77,14 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
 - The ETS2 telemetry plugin DLLs under `assets/telemetry-plugin/` are third-party binaries. Their
   SHA-256s are in that folder's README; re-check them if the files change.
 - Telemetry (M2) reads a memory-mapped file from the plugin, which is why the app is Windows-only.
+- Migrations: sqlx stores each applied migration's SHA-384 and refuses a database whose stored checksum differs from
+  the embedded file. Git checked `0001_init.sql` out as CRLF on GitHub's Windows runner and LF locally, so a database
+  made by a local build crashed the released app in `setup()` before any window (#4601). `.gitattributes` pins
+  `src-tauri/migrations/*.sql` to LF, and `db::migrate` first rewrites a stored checksum that matches the other line
+  endings (`repair_line_ending_checksums`; a real edit still fails). Never edit an applied migration: add a new one.
+  A failed `setup()` now shows a MessageBox with the error chain (`show_startup_error` in `lib.rs`, skipped when the
+  E2E CDP port is set). In a release build stderr goes nowhere, so to see the log run the exe from a shell with
+  `PROJECTTRUCKS_DATA_DIR` pointing at a copy of the database, never the real one.
 - A copied-in `src-tauri/target` from another path breaks the build ("failed to read plugin
   permissions … app_hide.toml"): delete `src-tauri/target`.
 - Telemetry replay: set `PROJECTTRUCKS_TELEMETRY_REPLAY=<fixture.json>` (and optionally
