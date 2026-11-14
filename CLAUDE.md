@@ -137,6 +137,15 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   The first real-game test (Nov 14) recorded the cancel as a cancelled session as expected: paused on the frame before the
   job vanished. Shay's live database isn't visible from Claude's shell here (`%APPDATA%` showed a stale May copy): ask him
   for a Settings → Backup file instead.
+- Owned trailers (#4734): the bundled plugin (`ets2-telemetry.cpp` frame callback) clears the job fields only when the
+  trailer is **unhitched** with under 500 m of route left. An owned trailer stays hitched after the drop-off, so the
+  delivered job stays in the frame for good, and before the fix the app kept "driving" it (Shay's Poznań → Málaga
+  delivery, Nov 14: the Hub's live status still said on the job, 2,346 km, no route). The state machine now ends a job
+  when its route advisor was under `Config::arrival_km` (2 km) and then reads 0 on two unpaused samples in a row, and
+  ignores that stale job (`delivered`) until the frame shows a different one or none. Within 2 km a vanished job is
+  also delivered even if paused (the results screen pauses the game). A disconnect resets the arrival tracking, since
+  a reloaded game can show an empty route for a moment. E2E: `e2e/owned-trailer.spec.ts`. The finished-job memory is
+  in RAM only: an app restart right after an owned-trailer delivery picks the stale job up as new again (#4730).
 - Dashboard (M3.1, `src/routes/Dashboard.tsx`, `commands/stats.rs`): `get_dashboard_stats` takes the viewer's UTC offset
   (`-getTimezoneOffset()`), so "this month" and the 30-day series follow local days; tests pin `now` through
   `DashboardQuery`. Distances follow the rollup rules (sessions carry recorded km, a manual job its own; cancelled
