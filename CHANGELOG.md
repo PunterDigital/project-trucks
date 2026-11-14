@@ -4,6 +4,18 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.7.0 — 2026-11-14
+
+### Features
+- **Job in progress on the Dashboard.** While you're on a delivery, the Dashboard shows what you're hauling,
+  from where to where, the pay, the distance and (game) time left from the route advisor, how long until the
+  deadline, and a completion bar. It updates live and goes away once the job is delivered or cancelled.
+  ([#66](https://github.com/PunterDigital/project-trucks/pull/66))
+- **Live telemetry indicator.** The header pill now shows whether the app is actually tracking: Tracking
+  (green), Waiting for ETS2 (auto-capture on, game not connected) or Not tracking (auto-capture off). Hover it
+  to see what's being recorded; click it to open Settings.
+  ([#67](https://github.com/PunterDigital/project-trucks/pull/67))
+
 ## v0.6.4 — 2026-11-14
 
 ### Fixes
