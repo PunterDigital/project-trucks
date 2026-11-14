@@ -39,7 +39,13 @@ E2E runs on Shay's PC, often while he plays ETS2 (Nov 14: test windows kept pull
 CDP port set, `create_main_window` builds the window `focused(false)` + `skip_taskbar(true)` and adds
 `CalculateNativeWinOcclusion` to `--disable-features` plus `--disable-backgrounding-occluded-windows
 --disable-renderer-backgrounding`, so a window under the game keeps rendering. Never call `bringToFront()` or focus the
-window from a spec. Checked with a foreground-window logger during a full run: no ProjectTrucks window ever took focus.
+window from a spec. That wasn't enough (#4712: three ~1 s grabs late in a run over Helldivers 2): tao clears its
+"don't focus" marker right after creating the window, so a later style refresh re-shows it with `SW_SHOW`, and Windows
+lets that through once the foreground lock timeout has passed with no keyboard/mouse input (controller play). So the
+test window is also `focusable(false)` (`WS_EX_NOACTIVATE`) and gets a subclass (`src-tauri/src/e2e_window.rs`) that
+adds `SWP_NOACTIVATE` to every position change, refuses mouse activation and, if activated anyway, hands the foreground
+back to the window it came from. Never call `set_focus()` in test mode either: tao's `force_window_active` fakes an Alt
+key press to steal the foreground. Check with `scripts/fg-logger.ps1` in the control repo during a full run.
 
 Isolation: every test sets `PROJECTTRUCKS_DATA_DIR` (see `src-tauri/src/db/mod.rs`), which holds the
 SQLite database and the WebView2 profile (`<dir>/webview`). Never run E2E without it: the default
