@@ -4,6 +4,15 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.9.1 — 2026-11-14
+
+### Fixes
+- **Deliveries with your own trailer are recorded again.** The telemetry plugin only clears a job when the trailer
+  is unhitched, so with an owned trailer (which stays hitched after the drop-off) a finished delivery never showed
+  up in Jobs and the app kept treating it as in progress. A job now counts as delivered when the route advisor was
+  nearly at the drop-off and then clears, and the finished job isn't picked up again while you drive on.
+  ([#74](https://github.com/PunterDigital/project-trucks/pull/74))
+
 ## v0.9.0 — 2026-11-14
 
 ### Features
