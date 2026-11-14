@@ -107,7 +107,7 @@ We track *all* driving, not just deliveries. The state machine has three driving
 2. **Game connected + truck moves** → enter `FreeRoam`. Snapshot start odometer + timestamp.
 3. **Trailer attaches with a valid job** → close the current `FreeRoam` session (write row), enter `Delivery`. Snapshot start odometer + job fields (source/dest, cargo, declared income, deadline).
 4. **Trailer detaches near destination + income lands** → close the `Delivery` session and write a `jobs` row pointing at it. Re-enter `FreeRoam`.
-5. **Trailer detaches without income** (cancellation) → close the `Delivery` session with `status='CANCELLED'` (no `jobs` row written), return to `FreeRoam`.
+5. **Trailer detaches without income** (cancellation) → close the `Delivery` session with `status='CANCELLED'` and write a `jobs` row with `status='CANCELLED'` pointing at it (so the cancel shows in Jobs; it never counts as a delivery or income, and is never sanity-flagged), return to `FreeRoam`. Changed after the first real-game test (#2513): with no job row a cancel was invisible.
 6. **Game disconnects, OR truck idle for >5 minutes** → close the current session and enter `NotDriving`.
 
 Every state transition emits a Tauri event so the UI can refresh live. Lifetime km is the sum of `distance_km` across all `driving_sessions`; delivery km is the sum of sessions with `kind = 'JOB'`; free-roam km is the rest.

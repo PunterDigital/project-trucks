@@ -438,7 +438,7 @@ This is the hardest milestone. Start with Task 2.0 (licensing/plugin sourcing) b
 2. Poll loop: every 1s. For each emitted state-machine event:
    * `SessionEnded { kind=FREE_ROAM }` → insert into `driving_sessions`, recompute truck rollup.
    * `JobCompleted` + `SessionEnded { kind=JOB, status=COMPLETED }` → insert session row first, then insert job row referencing it (single transaction), recompute truck rollup.
-   * `JobCancelled` + `SessionEnded { kind=JOB, status=CANCELLED }` → insert session row only (no job row), recompute truck rollup.
+   * `JobCancelled` + `SessionEnded { kind=JOB, status=CANCELLED }` → insert session row + a `CANCELLED` job row linked to it (changed in #2513; see PLAN.md), recompute truck rollup.
 3. Refactor the core write logic out of the Tauri commands into reusable fns so both telemetry and the manual-entry form go through the same path.
 4. Emit Tauri events: `telemetry:status` (connected | not_connected | free_roam | delivery | parked), `session:created`, `job:created`.
 5. Frontend listens to `session:created` and `job:created` on Dashboard and Jobs/Trucks pages — refetch.

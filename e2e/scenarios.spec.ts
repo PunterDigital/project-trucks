@@ -152,12 +152,14 @@ test.describe("auto-capture over a whole shift", () => {
 
     const rowFor = (city: string) => page.getByRole("row").filter({ hasText: city });
 
-    // Delivered jobs, one row each; the cancelled job never becomes a job row.
+    // One row per job, the cancelled one included (#2513), marked Cancelled.
     await expect(rowFor("Amsterdam")).toHaveCount(1, { timeout: 60_000 });
     await expect(rowFor("Lyon")).toHaveCount(1);
     await expect(rowFor("Dover")).toHaveCount(1);
     await expect(rowFor("Antwerp")).toHaveCount(1);
-    await expect(rowFor("Brussels")).toHaveCount(0);
+    await expect(rowFor("Brussels")).toHaveCount(1);
+    await expect(rowFor("Brussels")).toContainText("Cancelled");
+    await expect(rowFor("Brussels").getByTestId("flagged-badge")).toHaveCount(0);
 
     await expect(rowFor("Lyon")).toContainText("On time");
     // Ferry and alt-tab deliveries keep their whole distance: 12 km driven, minus the 1.2 km

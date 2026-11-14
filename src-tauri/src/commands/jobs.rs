@@ -10,7 +10,7 @@ use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::db::models::{Job, JobFilter, JobPatch, JobSource, JobsPage, NewJob};
+use crate::db::models::{Job, JobFilter, JobPatch, JobSource, JobStatus, JobsPage, NewJob};
 use crate::db::rollups::recompute_truck;
 use crate::db::AppState;
 
@@ -37,12 +37,14 @@ pub async fn insert_job(pool: &SqlitePool, input: NewJob) -> Result<Job> {
 pub async fn insert_job_row(conn: &mut SqliteConnection, input: NewJob) -> Result<Job> {
     let id = format!("job_{}", Uuid::new_v4().simple());
     let avg_speed_kmh = compute_avg_speed(input.distance_km, input.duration_sec);
-    // Manual entries are the user's own numbers; only recorded deliveries get sanity-checked.
-    let flag_reason = if input.source == JobSource::Telemetry {
-        sanity_flag(input.distance_km, input.duration_sec, avg_speed_kmh)
-    } else {
-        None
-    };
+    // Manual entries are the user's own numbers; only recorded deliveries get sanity-checked
+    // (a recorded cancel is often under 1 km on purpose: dropped right after pickup).
+    let flag_reason =
+        if input.source == JobSource::Telemetry && input.status != JobStatus::Cancelled {
+            sanity_flag(input.distance_km, input.duration_sec, avg_speed_kmh)
+        } else {
+            None
+        };
     let flagged = flag_reason.is_some();
 
     sqlx::query(
