@@ -4,6 +4,14 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.9.2 — 2026-11-14
+
+### Fixes
+- **Restarting mid-delivery keeps the job.** Closing ProjectTrucks (or updating it) during a delivery used to start
+  the job over from where you were when it reopened, so the finished job was missing everything driven before.
+  The job in progress is now saved as you go and picked up again when the app starts, as long as the game still
+  has the same job. ([#76](https://github.com/PunterDigital/project-trucks/pull/76))
+
 ## v0.9.1 — 2026-11-14
 
 ### Fixes
