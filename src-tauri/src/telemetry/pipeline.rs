@@ -58,6 +58,11 @@ impl Pipeline {
         self.machine.state()
     }
 
+    /// The job the machine is tracking (running or parked), if any.
+    pub fn active_job(&self) -> Option<&super::state_machine::JobInProgress> {
+        self.machine.active_job()
+    }
+
     /// Feed one sample (wall-clock `at`; `None` = no frame) and write the resulting rows.
     pub async fn step(
         &mut self,
@@ -318,6 +323,8 @@ mod tests {
             cargo_id: Some("apples".into()),
             cargo_name: Some("Apples".into()),
             cargo_mass_kg: 18_000.0,
+            route_distance_km: 0.0,
+            route_time_minutes: 0.0,
         }
     }
 

@@ -3,7 +3,8 @@
 //!
 //! Tauri events: `telemetry:status` (a string, only when it changes), `session:created` (a
 //! `DrivingSession`) and `job:created` (a `Job`). The latest status is also kept in
-//! [`TelemetryStatus`] so a page that opens later can ask for it.
+//! [`TelemetryStatus`] so a page that opens later can ask for it. `telemetry:job` carries the job in
+//! progress (a [`CurrentJob`] or `null`) whenever it changes, kept in [`CurrentJobState`] too.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -13,6 +14,7 @@ use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::watch;
 
+use super::current_job::{current_job, CurrentJob};
 use super::pipeline::{Created, Pipeline};
 use super::reader::TelemetryReader;
 use super::replay::Replay;
@@ -35,6 +37,10 @@ impl Default for TelemetryStatus {
         Self(Mutex::new(STATUS_NOT_CONNECTED.to_string()))
     }
 }
+
+/// Latest value of the `telemetry:job` event.
+#[derive(Default)]
+pub struct CurrentJobState(pub Mutex<Option<CurrentJob>>);
 
 pub enum Source {
     /// Read the plugin's memory-mapped file.
@@ -76,6 +82,7 @@ pub async fn run(
                     reader = None;
                     pipeline = Pipeline::default();
                     set_status(&app, STATUS_NOT_CONNECTED);
+                    set_current_job(&app, None);
                     if enabled.changed().await.is_err() {
                         return;
                     }
@@ -126,6 +133,7 @@ pub async fn run(
             for sample in &replay.samples {
                 while !*enabled.borrow_and_update() {
                     set_status(&app, STATUS_NOT_CONNECTED);
+                    set_current_job(&app, None);
                     if enabled.changed().await.is_err() {
                         return;
                     }
@@ -141,6 +149,7 @@ pub async fn run(
             while enabled.changed().await.is_ok() {
                 if !*enabled.borrow_and_update() {
                     set_status(&app, STATUS_NOT_CONNECTED);
+                    set_current_job(&app, None);
                 }
             }
         }
@@ -169,6 +178,27 @@ async fn tick(
         Err(e) => tracing::error!(error = %e, "writing telemetry rows failed"),
     }
     set_status(app, status_name(frame.is_some(), pipeline.state()));
+    set_current_job(
+        app,
+        current_job(pipeline.active_job(), frame, pipeline.state()),
+    );
+}
+
+fn set_current_job(app: &AppHandle, job: Option<CurrentJob>) {
+    let state = app.state::<CurrentJobState>();
+    let mut current = state.0.lock().expect("current job lock");
+    if *current != job {
+        *current = job.clone();
+        drop(current);
+        if let Err(e) = app.emit("telemetry:job", job) {
+            tracing::warn!(error = %e, "could not emit telemetry:job");
+        }
+    }
+}
+
+#[tauri::command]
+pub fn get_current_job(state: tauri::State<'_, CurrentJobState>) -> Option<CurrentJob> {
+    state.0.lock().expect("current job lock").clone()
 }
 
 fn set_status(app: &AppHandle, name: &str) {

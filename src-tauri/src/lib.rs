@@ -37,6 +37,7 @@ pub fn run() {
             commands::export::export_jobs_csv,
             commands::export::backup_database,
             telemetry::runner::get_telemetry_status,
+            telemetry::runner::get_current_job,
             settings::get_settings,
             settings::update_settings,
             settings::detect_ets2,
@@ -59,6 +60,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         None => telemetry::runner::Source::Live,
     };
     app.manage(telemetry::runner::TelemetryStatus::default());
+    app.manage(telemetry::runner::CurrentJobState::default());
     tauri::async_runtime::block_on(settings::detect_on_first_run(&pool))?;
     let saved = tauri::async_runtime::block_on(settings::load(&pool))?;
     let auto_capture = saved.auto_capture;

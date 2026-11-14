@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import { api } from "@/lib/api";
+import type { CurrentJob } from "@/types";
 
 /** Telemetry connection / driving status, as sent in `telemetry:status`. */
 export type TelemetryStatus =
@@ -67,4 +68,37 @@ export function useTelemetryStatus(): TelemetryStatus {
   }, []);
 
   return status;
+}
+
+/** Latest `telemetry:job` (the job in progress, or null); asks for the current one on mount. */
+export function useCurrentJob(): CurrentJob | null {
+  const [job, setJob] = useState<CurrentJob | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let off: (() => void) | undefined;
+    // An event that arrives before the first answer wins over that (older) answer.
+    let heard = false;
+    listen<CurrentJob | null>("telemetry:job", (e) => {
+      heard = true;
+      setJob(e.payload);
+    })
+      .then((fn) => {
+        if (cancelled) fn();
+        else off = fn;
+      })
+      .catch(() => {});
+    api
+      .getCurrentJob()
+      .then((j) => {
+        if (!cancelled && !heard) setJob(j);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
+
+  return job;
 }
