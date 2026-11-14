@@ -12,6 +12,7 @@ import type {
   DashboardStats,
   DbPing,
   DrivingSession,
+  HubStatus,
   Job,
   JobFilter,
   JobPatch,
@@ -58,6 +59,25 @@ export const api = {
   installUpdate: () => invoke<UpdateStatus>("install_update"),
 
   openReleasePage: () => invoke<void>("open_release_page"),
+
+  // -- ProjectTrucks Hub ----
+  getHubStatus: () => invoke<HubStatus>("get_hub_status"),
+
+  /** Starts linking: the status then carries the code to approve on the website. */
+  hubLinkStart: () => invoke<HubStatus>("hub_link_start"),
+
+  hubLinkCancel: () => invoke<HubStatus>("hub_link_cancel"),
+
+  hubUnlink: () => invoke<HubStatus>("hub_unlink"),
+
+  /** Queues every older job the Hub doesn't have yet. */
+  hubSyncHistory: () => invoke<HubStatus>("hub_sync_history"),
+
+  /** Retries refused jobs and syncs straight away. */
+  hubSyncNow: () => invoke<HubStatus>("hub_sync_now"),
+
+  /** Opens the approval page ("approve") or the driver's Hub profile ("profile"). */
+  hubOpen: (target: "approve" | "profile") => invoke<void>("hub_open", { target }),
 
   // -- Sessions ----
   createSession: (input: NewSession) =>

@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod db;
+pub mod hub;
 pub mod plugin_installer;
 pub mod settings;
 pub mod telemetry;
@@ -47,6 +48,13 @@ pub fn run() {
             updater::check_for_updates,
             updater::install_update,
             updater::open_release_page,
+            hub::get_hub_status,
+            hub::hub_link_start,
+            hub::hub_link_cancel,
+            hub::hub_unlink,
+            hub::hub_sync_history,
+            hub::hub_sync_now,
+            hub::hub_open,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -65,6 +73,13 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let saved = tauri::async_runtime::block_on(settings::load(&pool))?;
     let auto_capture = saved.auto_capture;
     let (capture_tx, capture_rx) = tokio::sync::watch::channel(auto_capture);
+    // ProjectTrucks Hub: the live-status feed the runner publishes to, and the sync state.
+    let (live_tx, live_rx) = tokio::sync::watch::channel(None);
+    app.manage(hub::live::LiveFeed(live_tx));
+    let hub = hub::setup(app, &pool)?;
+    app.manage(hub.clone());
+    tauri::async_runtime::spawn(hub::run_sync(handle.clone(), pool.clone(), hub.clone()));
+    tauri::async_runtime::spawn(hub::live::run(handle.clone(), pool.clone(), hub, live_rx));
     app.manage(settings::AutoCapture(capture_tx));
     tauri::async_runtime::spawn(telemetry::runner::run(
         handle.clone(),
