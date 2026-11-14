@@ -208,6 +208,15 @@ fn str_field(bytes: &[u8]) -> &str {
     std::str::from_utf8(trim_nul(bytes)).unwrap_or("")
 }
 
+/// A route-advisor number, with NaN and negatives (no route) read as 0.
+fn positive(v: f32) -> f32 {
+    if v.is_finite() && v > 0.0 {
+        v
+    } else {
+        0.0
+    }
+}
+
 /// ETS2 game minutes (since 0001-01-01 00:00) as a date-time.
 fn game_minutes(minutes: i32) -> Option<NaiveDateTime> {
     let epoch = NaiveDate::from_ymd_opt(1, 1, 1)?.and_hms_opt(0, 0, 0)?;
@@ -303,6 +312,8 @@ impl TelemetryFrame {
                 cargo_id: c_str_opt(&r2.trailer_id),
                 cargo_name: c_str_opt(&r2.trailer_name),
                 cargo_mass_kg: r2.trailer_mass,
+                route_distance_km: positive(self.rev4.navigation_distance) / 1000.0,
+                route_time_minutes: positive(self.rev4.navigation_time) / 60.0,
             }),
         }
     }
@@ -600,5 +611,16 @@ mod tests {
         assert!((snap.truck.odometer_km - 514_343.7).abs() < 0.1);
         assert!(snap.truck.fuel_litres > 0.0);
         assert!(snap.game_time.is_some());
+        // Route advisor at capture time: 808 km and ~24 game hours (the route has a ferry).
+        let job = snap.job.expect("the frame has a job");
+        assert!((job.route_distance_km - 807.957).abs() < 0.01);
+        assert!((job.route_time_minutes - 1458.9).abs() < 0.1);
+    }
+
+    #[test]
+    fn route_numbers_without_a_route_read_as_zero() {
+        assert_eq!(positive(f32::NAN), 0.0);
+        assert_eq!(positive(-3.0), 0.0);
+        assert_eq!(positive(12.5), 12.5);
     }
 }

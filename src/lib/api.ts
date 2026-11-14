@@ -7,6 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 
 import type {
+  CurrentJob,
   DashboardQuery,
   DashboardStats,
   DbPing,
@@ -34,6 +35,7 @@ export const api = {
 
   // -- Telemetry ----
   getTelemetryStatus: () => invoke<TelemetryStatus>("get_telemetry_status"),
+  getCurrentJob: () => invoke<CurrentJob | null>("get_current_job"),
 
   // -- Settings ----
   getSettings: () => invoke<Settings>("get_settings"),

@@ -58,7 +58,7 @@ pub struct JobInProgress {
 
 impl JobInProgress {
     /// Same job as `other`? The game has no job id, so compare what the plugin exposes.
-    fn same_job(&self, other: &JobSnapshot) -> bool {
+    pub fn same_job(&self, other: &JobSnapshot) -> bool {
         let a = &self.job;
         a.income == other.income
             && a.source_company == other.source_company
@@ -446,6 +446,8 @@ mod tests {
             cargo_id: Some("beer".into()),
             cargo_name: Some("Beer".into()),
             cargo_mass_kg: 12_000.0,
+            route_distance_km: 0.0,
+            route_time_minutes: 0.0,
         }
     }
 

@@ -137,6 +137,13 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   manual jobs still count km, not deliveries or income). Charts are recharts with `var(--chart-*)` fills; they draw
   nothing in a zero-size container, so the chart boxes have fixed heights. Stat cards carry
   `data-testid="stat-card"` + `data-label` for E2E (`e2e/dashboard.spec.ts`).
+- Job in progress (#4620, `src/components/JobInProgress.tsx` on the Dashboard, `telemetry/current_job.rs`): each tick the
+  runner builds a `CurrentJob` from the state machine's active job (start odometer) and the latest frame (odometer, route
+  advisor) and emits `telemetry:job` (object or `null`) when it changes; `get_current_job` answers a page opened later.
+  Completion = driven / (driven + route km left), `None` without a route (the plugin writes 0). The route-advisor numbers
+  are `navigation_distance` (m) and `navigation_time` (**game** seconds: the real frame had 808 km / 24.3 h with a ferry)
+  in rev4; `JobSnapshot.route_distance_km` / `route_time_minutes` are `#[serde(default)]` so older replay fixtures still
+  parse. E2E: `e2e/job-in-progress.spec.ts`.
 - Truck page (M3.2, `src/routes/TruckDetail.tsx`): `get_truck_stats(id, query)` returns `None` for an unknown id, else the
   truck row plus a lifetime `PeriodStats` scoped to the truck (`TruckScope` in `commands/stats.rs` pushes
   `truck_make = ? AND truck_model = ?` into the same queries the dashboard uses, so the two can't drift), the job count,

@@ -265,3 +265,30 @@ export interface TruckStats {
   /** 30 entries, oldest first, ending today. */
   last30Days: DistanceDay[];
 }
+
+// --- Job in progress (#4620) ---------------------------------------------
+
+/** The job on the truck right now. Mirrors `telemetry::current_job::CurrentJob`. */
+export interface CurrentJob {
+  cargoName: string | null;
+  cargoMassKg: number;
+  sourceCity: string | null;
+  sourceCompany: string | null;
+  destinationCity: string | null;
+  destinationCompany: string | null;
+  income: number;
+  /** In-game deadline (game clock, no time zone). */
+  deadline: IsoDateTime | null;
+  gameTime: IsoDateTime | null;
+  /** Game minutes until the deadline; negative once it has passed. */
+  minutesToDeadline: number | null;
+  drivenKm: number;
+  /** Route advisor km to go; null when no route is set. */
+  distanceLeftKm: number | null;
+  /** Route advisor game minutes to go; null when no route is set. */
+  routeMinutesLeft: number | null;
+  /** 0–100; null without a route. */
+  progressPct: number | null;
+  /** Stopped or paused mid-job. */
+  parked: boolean;
+}

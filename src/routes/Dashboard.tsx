@@ -4,6 +4,7 @@ import { Gauge } from "lucide-react";
 
 import { DistanceChart, OnTimeDonut } from "@/components/charts";
 import { EmptyState } from "@/components/EmptyState";
+import { JobInProgress } from "@/components/JobInProgress";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
 import { LoadError } from "@/components/LoadError";
 import { StatsPageSkeleton } from "@/components/Skeletons";
@@ -23,6 +24,7 @@ import { api } from "@/lib/api";
 import { formatCurrency, formatKm, formatRelativeDate } from "@/lib/format";
 import {
   useCaptureRefresh,
+  useCurrentJob,
   useTelemetryStatus,
   type TelemetryStatus,
 } from "@/lib/useTelemetryEvents";
@@ -71,6 +73,7 @@ function pctDelta(current: PeriodStats, previous: PeriodStats): StatDelta | unde
 export function Dashboard() {
   const navigate = useNavigate();
   const telemetry = useTelemetryStatus();
+  const currentJob = useCurrentJob();
   const captured = useCaptureRefresh();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -101,6 +104,8 @@ export function Dashboard() {
           {TELEMETRY_LABELS[telemetry]}
         </p>
       </div>
+
+      <JobInProgress job={currentJob} />
 
       {error ? (
         <LoadError

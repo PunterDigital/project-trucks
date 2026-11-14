@@ -3,6 +3,7 @@
 //! Windows-only at runtime (the plugin and the game are), but the types compile everywhere so the
 //! state machine can be tested anywhere.
 
+pub mod current_job;
 pub mod pipeline;
 pub mod reader;
 pub mod replay;
@@ -65,4 +66,11 @@ pub struct JobSnapshot {
     pub cargo_id: Option<String>,
     pub cargo_name: Option<String>,
     pub cargo_mass_kg: f32,
+    /// Route advisor: distance left to the destination in km (0 when no route is set).
+    /// Older replay fixtures don't have it, hence the default.
+    #[serde(default)]
+    pub route_distance_km: f32,
+    /// Route advisor: estimated time left in game minutes (0 when no route is set).
+    #[serde(default)]
+    pub route_time_minutes: f32,
 }
