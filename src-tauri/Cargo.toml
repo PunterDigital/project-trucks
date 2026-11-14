@@ -38,4 +38,4 @@ semver = "1"
 reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json", "http2", "system-proxy"] }
 
 [target."cfg(windows)".dependencies]
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Memory", "Win32_Security", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Memory", "Win32_Security", "Win32_Security_Credentials", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }

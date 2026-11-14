@@ -292,3 +292,37 @@ export interface CurrentJob {
   /** Stopped or paused mid-job. */
   parked: boolean;
 }
+
+// --- ProjectTrucks Hub (#4634) ---------------------------------------------
+
+/** Mirrors `hub::api::HubAccount`. */
+export interface HubAccount {
+  name: string;
+  username: string | null;
+  profileUrl: string;
+}
+
+/** A link in progress: the code the driver approves on the website. */
+export interface HubLinking {
+  userCode: string;
+  verificationUri: string;
+  expiresAt: string;
+}
+
+/** Mirrors `hub::HubStatus`. */
+export interface HubStatus {
+  /** null when the Hub is off (test profile without a stub). */
+  hubUrl: string | null;
+  linked: boolean;
+  account: HubAccount | null;
+  linking: HubLinking | null;
+  /** Waiting to be sent. */
+  pending: number;
+  /** Refused by the Hub; not retried until "Retry". */
+  failed: number;
+  synced: number;
+  /** Jobs from before linking, sent only by "Sync history". */
+  history: number;
+  lastSyncAt: string | null;
+  lastError: string | null;
+}

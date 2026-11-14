@@ -196,3 +196,19 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   serving a stub exe that logs its arguments. A stub named `*setup.exe` needs an `asInvoker` manifest
   (`rustc … -C link-arg=/MANIFEST:EMBED "-Clink-arg=/MANIFESTUAC:level='asInvoker' uiAccess='false'"`), or Windows'
   installer detection (on by default) can demand elevation for the name alone. Never run a real release installer locally: `/P` replaces Shay's install.
+- ProjectTrucks Hub sync (#4634, `src-tauri/src/hub/`, `src/components/HubSettings.tsx`, Settings → "ProjectTrucks Hub"):
+  links the app to a Hub account (https://project-trucks.shaypunter.co.uk, the Laravel app in `../project-trucks-hub`; API
+  contract in its `docs/api.md`) with the device-code flow: `hub_link_start` asks for a code, shows it, opens the approval page
+  and polls until the driver approves. The token lives in Windows Credential Manager (`token.rs`, generic credential
+  `ProjectTrucks/hub-token`, plain `windows-sys` calls, no keyring crate); test profiles keep it in `<data dir>/hub-token`.
+  Migration `0002_hub_sync.sql` adds `hub_outbox` + `hub_jobs` and **triggers on `jobs`** that queue inserts, edits (of the
+  synced columns only, never `notes`) and deletes while the `hub_linked` setting is `'true'`, so every write path is covered
+  without calling the sync code; jobs from before linking go only through "Sync history". `run_sync` drains the outbox every
+  3 s (deletes, then batches of 100; a 422 batch is retried job by job and a job refused 5 times is parked as "refused";
+  network errors back off 10 s → 5 min). A 401 anywhere = unlinked on the website: token and queue are dropped. Results clear
+  only the outbox row with the `queued_at` they were sent for, so an edit mid-send stays queued. Status goes out as
+  `hub:status` (`src/lib/hub.ts`). Live status (#4635, `hub/live.rs`): the runner publishes each tick to a watch channel;
+  `PUT /status` on a change of truck/job/parked (≥ 5 s apart) or every 30 s, `DELETE /status` once when the game goes away
+  or capture is switched off. Test profiles only talk to `PROJECTTRUCKS_HUB_URL` (ignored elsewhere) and never open a
+  browser; `e2e/hub.spec.ts` serves a stub Hub from Node. The Hub's `/download` page still says syncing "arrives in an
+  upcoming update": drop that line in the Hub repo once a release with this ships.

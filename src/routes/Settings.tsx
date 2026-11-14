@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { HubSettings } from "@/components/HubSettings";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -190,6 +191,8 @@ export function Settings() {
           </Badge>
         </div>
       </section>
+
+      <HubSettings />
 
       <section className="space-y-3" aria-labelledby="path-heading">
         <h3 id="path-heading" className="text-lg font-medium">

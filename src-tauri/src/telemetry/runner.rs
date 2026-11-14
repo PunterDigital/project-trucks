@@ -83,6 +83,7 @@ pub async fn run(
                     pipeline = Pipeline::default();
                     set_status(&app, STATUS_NOT_CONNECTED);
                     set_current_job(&app, None);
+                    crate::hub::live::publish(&app, None, None);
                     if enabled.changed().await.is_err() {
                         return;
                     }
@@ -134,6 +135,7 @@ pub async fn run(
                 while !*enabled.borrow_and_update() {
                     set_status(&app, STATUS_NOT_CONNECTED);
                     set_current_job(&app, None);
+                    crate::hub::live::publish(&app, None, None);
                     if enabled.changed().await.is_err() {
                         return;
                     }
@@ -150,6 +152,7 @@ pub async fn run(
                 if !*enabled.borrow_and_update() {
                     set_status(&app, STATUS_NOT_CONNECTED);
                     set_current_job(&app, None);
+                    crate::hub::live::publish(&app, None, None);
                 }
             }
         }
@@ -178,10 +181,9 @@ async fn tick(
         Err(e) => tracing::error!(error = %e, "writing telemetry rows failed"),
     }
     set_status(app, status_name(frame.is_some(), pipeline.state()));
-    set_current_job(
-        app,
-        current_job(pipeline.active_job(), frame, pipeline.state()),
-    );
+    let job = current_job(pipeline.active_job(), frame, pipeline.state());
+    crate::hub::live::publish(app, frame, job.as_ref());
+    set_current_job(app, job);
 }
 
 fn set_current_job(app: &AppHandle, job: Option<CurrentJob>) {
