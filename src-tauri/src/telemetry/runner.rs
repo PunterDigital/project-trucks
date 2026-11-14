@@ -5,6 +5,9 @@
 //! `DrivingSession`) and `job:created` (a `Job`). The latest status is also kept in
 //! [`TelemetryStatus`] so a page that opens later can ask for it. `telemetry:job` carries the job in
 //! progress (a [`CurrentJob`] or `null`) whenever it changes, kept in [`CurrentJobState`] too.
+//!
+//! The job in progress is saved in the settings table as it changes and picked up again when the
+//! app starts (#4730), so a restart or an update mid-delivery doesn't reset it.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -71,7 +74,8 @@ pub async fn run(
     source: Source,
     mut enabled: watch::Receiver<bool>,
 ) {
-    let mut pipeline = Pipeline::default();
+    // Carry on with a delivery that was running when the app last stopped (#4730).
+    let mut pipeline = Pipeline::restored(&pool).await;
     match source {
         Source::Live => {
             let mut reader: Option<TelemetryReader> = None;
@@ -81,6 +85,9 @@ pub async fn run(
                 if !*enabled.borrow_and_update() {
                     reader = None;
                     pipeline = Pipeline::default();
+                    if let Err(e) = Pipeline::forget(&pool).await {
+                        tracing::warn!(error = %e, "could not clear the saved job");
+                    }
                     set_status(&app, STATUS_NOT_CONNECTED);
                     set_current_job(&app, None);
                     crate::hub::live::publish(&app, None, None);
