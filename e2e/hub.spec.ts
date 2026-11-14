@@ -267,7 +267,8 @@ function snapshot(odometerKm: number, routeKm: number | null) {
       odometerKm,
       engineEnabled: true,
       trailerAttached: routeKm !== null,
-      position: [odometerKm * 1000, 0, 0],
+      position: [odometerKm * 1000, 0, -2500],
+      heading: 0.25,
       fuelLitres: 300,
       fuelCapacityLitres: 600,
       wearChassis: 0,
@@ -319,6 +320,12 @@ test.describe("live status", () => {
     const status = hub.statuses.find((s) => s !== "deleted" && s.job) as Record<string, unknown>;
     expect(status.truck).toEqual({ make: "Volvo", model: "FH16" });
     expect((status.job as Record<string, unknown>).cargo_name).toBe("Wine");
+    // The map position rides along (#4686): world x / z and the heading in degrees.
+    const position = status.position as { x: number; z: number; heading_deg: number };
+    expect(position.x).toBeGreaterThanOrEqual(1_010_000);
+    expect(position.z).toBe(-2500);
+    expect(position.heading_deg).toBe(90);
+
 
     // Switching auto-capture off ends the drive: the Hub is told.
     await page.getByLabel("Record drives and deliveries from ETS2 automatically").click();

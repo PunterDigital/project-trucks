@@ -14,7 +14,7 @@ use sqlx::SqlitePool;
 use tauri::{AppHandle, Manager};
 use tokio::sync::watch;
 
-use super::api::{HubError, LiveJob, LivePayload, LiveTruck};
+use super::api::{HubError, LiveJob, LivePayload, LivePosition, LiveTruck};
 use super::Hub;
 use crate::telemetry::current_job::CurrentJob;
 use crate::telemetry::TelemetrySnapshot;
@@ -30,6 +30,9 @@ pub struct LiveSnapshot {
     pub truck_make: Option<String>,
     pub truck_model: Option<String>,
     pub job: Option<CurrentJob>,
+    /// World x / z and the SCS heading (0..1 of a turn). Sent with every update, but a move
+    /// alone never triggers one: it rides along with the heartbeat (#4686).
+    pub position: Option<(f32, f32, f32)>,
 }
 
 /// Sender half, as Tauri managed state; the runner publishes through [`publish`].
@@ -44,6 +47,7 @@ pub fn publish(app: &AppHandle, frame: Option<&TelemetrySnapshot>, job: Option<&
         truck_make: f.truck.make.clone(),
         truck_model: f.truck.model.clone(),
         job: job.cloned(),
+        position: Some((f.truck.position.0, f.truck.position.2, f.truck.heading)),
     });
     feed.0.send_if_modified(|current| {
         if *current == next {
@@ -98,8 +102,18 @@ impl LiveSnapshot {
                     .map(|v| round1(f64::from(v)).clamp(0.0, 100.0)),
                 parked: j.parked,
             }),
+            position: self.position.map(|(x, z, heading)| LivePosition {
+                x: round1(f64::from(x)),
+                z: round1(f64::from(z)),
+                heading_deg: heading_degrees(heading),
+            }),
         }
     }
+}
+
+/// SCS heading (fraction of a full turn) as degrees in 0..360, one decimal.
+fn heading_degrees(turns: f32) -> f64 {
+    round1((f64::from(turns) * 360.0).rem_euclid(360.0)) % 360.0
 }
 
 fn round1(v: f64) -> f64 {
@@ -190,6 +204,7 @@ mod tests {
                 progress_pct: Some(12.34),
                 parked,
             }),
+            position: Some((-12_345.67, 4_321.04, 0.25)),
         }
     }
 
@@ -226,14 +241,39 @@ mod tests {
         assert_eq!(value["job"]["driven_km"], 10.0);
         assert_eq!(value["job"]["progress_pct"], 12.3);
         assert_eq!(value["job"]["income"], 9_000);
+        assert_eq!(value["position"]["x"], -12_345.7);
+        assert_eq!(value["position"]["z"], 4_321.0);
+        assert_eq!(value["position"]["heading_deg"], 90.0);
 
         let free_roam = LiveSnapshot {
             job: None,
             ..snapshot("Wine", false, 0.0)
         };
-        assert_eq!(
-            serde_json::to_value(free_roam.payload()).unwrap()["job"],
-            serde_json::Value::Null
-        );
+        let free_roam = serde_json::to_value(free_roam.payload()).unwrap();
+        assert_eq!(free_roam["job"], serde_json::Value::Null);
+        // Free-roaming still shows on the map, with the truck.
+        assert_eq!(free_roam["truck"]["model"], "FH16");
+        assert_eq!(free_roam["position"]["heading_deg"], 90.0);
+    }
+
+    #[test]
+    fn moving_alone_waits_for_the_heartbeat() {
+        let t0 = Instant::now();
+        let first = snapshot("Wine", false, 10.0);
+        let moved = LiveSnapshot {
+            position: Some((0.0, 0.0, 0.5)),
+            ..first.clone()
+        };
+        assert!(!due(Some((&first, t0)), &moved, t0 + MIN_GAP));
+        assert!(due(Some((&first, t0)), &moved, t0 + HEARTBEAT));
+    }
+
+    #[test]
+    fn headings_are_degrees_in_range() {
+        assert_eq!(heading_degrees(0.0), 0.0);
+        assert_eq!(heading_degrees(0.125), 45.0);
+        assert_eq!(heading_degrees(1.0), 0.0);
+        assert_eq!(heading_degrees(-0.25), 270.0);
+        assert_eq!(heading_degrees(0.99999), 0.0);
     }
 }
