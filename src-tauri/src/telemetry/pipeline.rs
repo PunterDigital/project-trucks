@@ -2,8 +2,9 @@
 //!
 //! Sessions and jobs go through the same `insert_*_row` helpers as the manual-entry commands. A
 //! completed delivery writes its session and job in one transaction; the truck rollup is
-//! recomputed once that commits. Cancelled deliveries keep their session (the kilometres still
-//! happened) but get no job row.
+//! recomputed once that commits. A cancelled delivery is written the same way, with a job row of
+//! status `CANCELLED` (#2513: a cancel has to show up in Jobs); the stats count only delivered and
+//! late jobs as deliveries and income, and the kilometres stay in the session.
 
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
@@ -42,7 +43,8 @@ impl Default for Pipeline {
     }
 }
 
-type FinishedJob = (JobInProgress, f32, NaiveDateTime);
+/// A finished job: what was hauled, the odometer and time it ended, and whether it was cancelled.
+type FinishedJob = (JobInProgress, f32, NaiveDateTime, bool);
 
 impl Pipeline {
     pub fn new(cfg: Config) -> Self {
@@ -81,7 +83,7 @@ impl Pipeline {
         while let Some(event) = events.next() {
             match event {
                 Event::SessionStarted { .. } => {}
-                Event::JobStarted { .. } | Event::JobCancelled { .. } => {
+                Event::JobStarted { .. } => {
                     self.parked_job_session = None;
                 }
                 Event::SessionEnded {
@@ -104,21 +106,32 @@ impl Pipeline {
                         ended_at: ended_at.and_utc(),
                         status,
                     };
-                    // A delivery's session is followed by its JobCompleted: write them together.
-                    let job: Option<FinishedJob> = if kind == SessionKind::Job
-                        && status == SessionStatus::Completed
-                        && matches!(events.peek(), Some(Event::JobCompleted { .. }))
-                    {
-                        match events.next() {
+                    // A delivery's session is followed by its JobCompleted (or JobCancelled):
+                    // write them together.
+                    let job: Option<FinishedJob> = match (kind, status, events.peek()) {
+                        (
+                            SessionKind::Job,
+                            SessionStatus::Completed,
+                            Some(Event::JobCompleted { .. }),
+                        )
+                        | (
+                            SessionKind::Job,
+                            SessionStatus::Cancelled,
+                            Some(Event::JobCancelled { .. }),
+                        ) => match events.next() {
                             Some(Event::JobCompleted {
                                 job,
                                 end_odometer_km,
                                 ended_at,
-                            }) => Some((job, end_odometer_km, ended_at)),
+                            }) => Some((job, end_odometer_km, ended_at, false)),
+                            Some(Event::JobCancelled {
+                                job,
+                                end_odometer_km,
+                                ended_at,
+                            }) => Some((job, end_odometer_km, ended_at, true)),
                             _ => None,
-                        }
-                    } else {
-                        None
+                        },
+                        _ => None,
                     };
                     self.write(pool, Some(session), job, game_time, &mut created)
                         .await?;
@@ -132,7 +145,22 @@ impl Pipeline {
                     self.write(
                         pool,
                         None,
-                        Some((job, end_odometer_km, ended_at)),
+                        Some((job, end_odometer_km, ended_at, false)),
+                        game_time,
+                        &mut created,
+                    )
+                    .await?;
+                }
+                Event::JobCancelled {
+                    job,
+                    end_odometer_km,
+                    ended_at,
+                } => {
+                    // Cancelled while parked: the session ended earlier.
+                    self.write(
+                        pool,
+                        None,
+                        Some((job, end_odometer_km, ended_at, true)),
                         game_time,
                         &mut created,
                     )
@@ -165,12 +193,19 @@ impl Pipeline {
             _ => None,
         };
         let job_row = match job {
-            Some((j, end_odometer_km, ended_at)) => {
+            Some((j, end_odometer_km, ended_at, cancelled)) => {
                 let session_id = session_row
                     .as_ref()
                     .map(|s| s.id.clone())
                     .or_else(|| self.parked_job_session.take());
-                let new_job = new_job(&j, end_odometer_km, ended_at, game_time, session_id);
+                let new_job = new_job(
+                    &j,
+                    end_odometer_km,
+                    ended_at,
+                    game_time,
+                    session_id,
+                    cancelled,
+                );
                 trucks.push((new_job.truck_make.clone(), new_job.truck_model.clone()));
                 Some(insert_job_row(&mut tx, new_job).await?)
             }
@@ -208,8 +243,16 @@ fn new_job(
     ended_at: NaiveDateTime,
     game_time: Option<NaiveDateTime>,
     session_id: Option<String>,
+    cancelled: bool,
 ) -> NewJob {
     let late = matches!((j.job.deadline, game_time), (Some(d), Some(now)) if now > d);
+    let status = if cancelled {
+        JobStatus::Cancelled
+    } else if late {
+        JobStatus::Late
+    } else {
+        JobStatus::Delivered
+    };
     NewJob {
         session_id,
         truck_make: j.truck_make.clone(),
@@ -228,11 +271,7 @@ fn new_job(
         damage_delta: None,
         started_at: j.started_at.and_utc(),
         completed_at: ended_at.and_utc(),
-        status: if late {
-            JobStatus::Late
-        } else {
-            JobStatus::Delivered
-        },
+        status,
         source: JobSource::Telemetry,
         notes: None,
     }
@@ -412,7 +451,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_job_keeps_its_session_but_gets_no_job_row() {
+    async fn cancelled_job_gets_a_cancelled_row_linked_to_its_session() {
         let pool = test_pool().await;
         let mut p = Pipeline::default();
         let mut paused = snap(120.0, 0.0, Some(job()));
@@ -436,12 +475,74 @@ mod tests {
             (s[0].kind, s[0].status),
             (SessionKind::Job, SessionStatus::Cancelled)
         );
-        assert!(jobs(&created).is_empty());
-        let n: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(n.0, 0);
+        let j = jobs(&created);
+        assert_eq!(j.len(), 1);
+        assert_eq!(j[0].status, JobStatus::Cancelled);
+        assert_eq!(j[0].session_id.as_deref(), Some(s[0].id.as_str()));
+        assert_eq!(j[0].dest_city, "Paris");
+        assert_eq!(j[0].distance_km, 15.0);
+        // A cancel is not a suspicious delivery.
+        assert!(!j[0].flagged);
+
+        // Not a delivery: the truck's km come from the session, and income stays out of the stats.
+        let (delivery, jobs_n): (f64, i64) =
+            sqlx::query_as("SELECT total_delivery_distance, total_jobs FROM trucks WHERE id = ?")
+                .bind(truck_id("Scania", "S 730"))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((delivery, jobs_n), (15.0, 1));
+    }
+
+    #[tokio::test]
+    async fn job_dropped_right_after_pickup_is_a_cancelled_row_without_a_flag() {
+        let pool = test_pool().await;
+        let mut p = Pipeline::default();
+        // Hitched up, rolled 200 m, then the job was gone: cancelled, under 1 km, but not flagged.
+        let created = feed(
+            &mut p,
+            &pool,
+            vec![
+                (0, Some(snap(100.0, 0.0, Some(job())))),
+                (1, Some(snap(100.1, 10.0, Some(job())))),
+                (2, Some(snap(100.2, 10.0, Some(job())))),
+                (3, Some(snap(100.2, 0.0, None))),
+            ],
+        )
+        .await;
+        let j = jobs(&created);
+        assert_eq!(j.len(), 1);
+        assert_eq!(j[0].status, JobStatus::Cancelled);
+        assert!(!j[0].flagged);
+        assert_eq!(j[0].flag_reason, None);
+    }
+
+    #[tokio::test]
+    async fn job_cancelled_while_parked_links_to_its_last_session() {
+        let pool = test_pool().await;
+        let mut p = Pipeline::default();
+        // Park with the job past the idle limit (the session ends, the job stays), then cancel it
+        // from the pause menu.
+        let mut paused = snap(130.0, 0.0, Some(job()));
+        paused.paused = true;
+        let created = feed(
+            &mut p,
+            &pool,
+            vec![
+                (0, Some(snap(100.0, 0.0, Some(job())))),
+                (1, Some(snap(105.0, 80.0, Some(job())))),
+                (2, Some(snap(130.0, 80.0, Some(job())))),
+                (3, Some(snap(130.0, 0.0, Some(job())))),
+                (700, Some(paused)),
+                (701, Some(snap(130.0, 0.0, None))),
+            ],
+        )
+        .await;
+        let s = sessions(&created);
+        let j = jobs(&created);
+        assert_eq!((s.len(), j.len()), (1, 1));
+        assert_eq!(j[0].status, JobStatus::Cancelled);
+        assert_eq!(j[0].session_id.as_deref(), Some(s[0].id.as_str()));
     }
 
     #[tokio::test]

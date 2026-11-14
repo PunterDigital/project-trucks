@@ -114,9 +114,17 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
         .ok()
         .and_then(|p| p.parse::<u16>().ok())
     {
-        builder = builder.additional_browser_args(&format!(
-            "{WEBVIEW2_DEFAULT_ARGS} --remote-debugging-port={port}"
-        ));
+        // E2E runs on Shay's PC while he games: the test window must not take focus or sit in
+        // the taskbar, and must keep rendering while the game covers it (Chromium otherwise
+        // throttles occluded windows, which stalls the tests).
+        builder = builder
+            .focused(false)
+            .skip_taskbar(true)
+            .additional_browser_args(&format!(
+                "{WEBVIEW2_DEFAULT_ARGS},CalculateNativeWinOcclusion \
+                 --disable-backgrounding-occluded-windows --disable-renderer-backgrounding \
+                 --remote-debugging-port={port}"
+            ));
     }
     builder.build()?;
     Ok(())

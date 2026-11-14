@@ -35,6 +35,12 @@ Playwright drives the **real app binary** (not a dev server): `e2e/fixtures.ts` 
 WebView2's own `WEBVIEW2_*` env vars are ignored on GitHub's Windows runners, so don't switch back to
 them.
 
+E2E runs on Shay's PC, often while he plays ETS2 (Nov 14: test windows kept pulling focus from the game). With the
+CDP port set, `create_main_window` builds the window `focused(false)` + `skip_taskbar(true)` and adds
+`CalculateNativeWinOcclusion` to `--disable-features` plus `--disable-backgrounding-occluded-windows
+--disable-renderer-backgrounding`, so a window under the game keeps rendering. Never call `bringToFront()` or focus the
+window from a spec. Checked with a foreground-window logger during a full run: no ProjectTrucks window ever took focus.
+
 Isolation: every test sets `PROJECTTRUCKS_DATA_DIR` (see `src-tauri/src/db/mod.rs`), which holds the
 SQLite database and the WebView2 profile (`<dir>/webview`). Never run E2E without it: the default
 data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
@@ -119,6 +125,12 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   150 km/h or distance under 1 km sets `flagged` + `flag_reason`; manual entries are never auto-flagged. The Jobs list and
   job page show a "Flagged" badge. `e2e/scenarios.spec.ts` replays a whole shift (cancel, on-time, ferry teleport, alt-tab gap,
   fast delivery) with a `Shift` builder; the first 1.2 km of a job are driven before the job is seen, so distances are 10.8 not 12.
+- Recorded cancels (#2513) get a job row with status `CANCELLED` linked to their `JOB`/`CANCELLED` session (also when cancelled
+  while parked), so they show in Jobs. Stats count only `DELIVERED`/`LATE` as deliveries and income, the km stay in the
+  session, and `insert_job_row` never sanity-flags a cancel (one dropped right after pickup is under 1 km on purpose).
+  The first real-game test (Nov 14) recorded the cancel as a cancelled session as expected: paused on the frame before the
+  job vanished. Shay's live database isn't visible from Claude's shell here (`%APPDATA%` showed a stale May copy): ask him
+  for a Settings → Backup file instead.
 - Dashboard (M3.1, `src/routes/Dashboard.tsx`, `commands/stats.rs`): `get_dashboard_stats` takes the viewer's UTC offset
   (`-getTimezoneOffset()`), so "this month" and the 30-day series follow local days; tests pin `now` through
   `DashboardQuery`. Distances follow the rollup rules (sessions carry recorded km, a manual job its own; cancelled
