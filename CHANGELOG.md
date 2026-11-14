@@ -4,6 +4,13 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.6.3 — 2026-11-14
+
+### Fixes
+- **Auto-capture now works with the real game.** The telemetry plugin ProjectTrucks installs reports
+  itself as revision 9, and the app only accepted revision 10, so it never connected while ETS2 was
+  running. Both are accepted now (same data layout). ([#62](https://github.com/PunterDigital/project-trucks/pull/62))
+
 ## v0.6.2 — 2026-11-14
 
 ### Fixes
