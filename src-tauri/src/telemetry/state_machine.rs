@@ -12,6 +12,13 @@
 //! (cancelling happens in the pause menu; deliveries finish during play) or when the truck hardly
 //! moved since pickup. That rule lives in [`StateMachine::job_outcome`] and still needs checking
 //! against the real game.
+//!
+//! Owned trailers (#4734): the bundled plugin clears the job fields only when the trailer is
+//! unhitched within 500 m of the destination. An owned trailer stays hitched after the delivery,
+//! so the job never disappears from the frame. The route advisor does: it counts down to the
+//! drop-off and is cleared when the job is handed in. So a job whose route was under
+//! [`Config::arrival_km`] and then reads 0 on two samples in a row counts as delivered, and the
+//! stale job left in the frame is ignored until the frame shows something else.
 
 use chrono::{Duration, NaiveDateTime};
 
@@ -32,6 +39,9 @@ pub struct Config {
     /// A position change larger than this (world units) counts as activity for the idle timer
     /// (ferries and fast travel move the truck without touching the odometer).
     pub teleport_units: f32,
+    /// Route distance left (km) under which the truck counts as arriving: a job whose route then
+    /// clears (or that disappears) is delivered, even if the game was paused on the results screen.
+    pub arrival_km: f32,
 }
 
 impl Default for Config {
@@ -42,6 +52,7 @@ impl Default for Config {
             moving_speed_kmh: 0.5,
             min_delivery_km: 0.5,
             teleport_units: 0.5,
+            arrival_km: 2.0,
         }
     }
 }
@@ -59,13 +70,16 @@ pub struct JobInProgress {
 impl JobInProgress {
     /// Same job as `other`? The game has no job id, so compare what the plugin exposes.
     pub fn same_job(&self, other: &JobSnapshot) -> bool {
-        let a = &self.job;
-        a.income == other.income
-            && a.source_company == other.source_company
-            && a.destination_company == other.destination_company
-            && a.destination_city == other.destination_city
-            && a.cargo_id == other.cargo_id
+        same_job(&self.job, other)
     }
+}
+
+fn same_job(a: &JobSnapshot, b: &JobSnapshot) -> bool {
+    a.income == b.income
+        && a.source_company == b.source_company
+        && a.destination_company == b.destination_company
+        && a.destination_city == b.destination_city
+        && a.cargo_id == b.cargo_id
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,6 +148,12 @@ pub struct StateMachine {
     last: Option<Last>,
     /// When the truck last stopped being active, while it is idle.
     idle_since: Option<NaiveDateTime>,
+    /// The active job's route was last seen under `arrival_km` (and above 0).
+    near_destination: bool,
+    /// Unpaused samples in a row, since arriving, with the route cleared.
+    cleared_route_samples: u8,
+    /// A delivered job whose fields the plugin left in the frame (owned trailer): not a new job.
+    delivered: Option<JobSnapshot>,
 }
 
 impl Default for StateMachine {
@@ -150,6 +170,9 @@ impl StateMachine {
             job: None,
             last: None,
             idle_since: None,
+            near_destination: false,
+            cleared_route_samples: 0,
+            delivered: None,
         }
     }
 
@@ -201,7 +224,20 @@ impl StateMachine {
             self.idle_since.get_or_insert(at);
         }
 
-        let job_now = current_job(s);
+        let job_now = self.job_in_frame(s);
+        if self.arrived(job_now) {
+            // Handed in with the trailer still hitched (#4734): finish it, then drive on without it.
+            let (status, job_event) = self.finish_job(at, s.truck.odometer_km, prev_paused);
+            if self.state() == DrivingState::Delivery {
+                self.end_session(at, s.truck.odometer_km, status, &mut events);
+                events.extend(job_event);
+                self.begin_free_roam(at, s, &mut events);
+            } else {
+                events.extend(job_event);
+            }
+            self.delivered = job_now.cloned();
+            return events;
+        }
         match self.state() {
             DrivingState::NotDriving => {
                 self.step_parked(at, s, moved, job_now, prev_paused, &mut events)
@@ -248,6 +284,36 @@ impl StateMachine {
         events
     }
 
+    /// The job in this sample, leaving out one that was already delivered and is still in the frame.
+    fn job_in_frame<'a>(&mut self, s: &'a TelemetrySnapshot) -> Option<&'a JobSnapshot> {
+        let job = current_job(s);
+        if let Some(done) = &self.delivered {
+            if job.is_some_and(|j| same_job(done, j)) {
+                return None;
+            }
+            self.delivered = None;
+        }
+        job
+    }
+
+    /// Track the route advisor for the active job; true once it was nearly there and the route
+    /// has been cleared for two samples in a row.
+    fn arrived(&mut self, job_now: Option<&JobSnapshot>) -> bool {
+        let Some(j) = job_now.filter(|j| self.job.as_ref().is_some_and(|a| a.same_job(j))) else {
+            return false;
+        };
+        if j.route_distance_km > 0.0 {
+            self.near_destination = j.route_distance_km < self.cfg.arrival_km;
+            self.cleared_route_samples = 0;
+            return false;
+        }
+        if !self.near_destination {
+            return false;
+        }
+        self.cleared_route_samples = self.cleared_route_samples.saturating_add(1);
+        self.cleared_route_samples >= 2
+    }
+
     /// `NotDriving`: wait for the truck to move, finishing any parked job that vanished meanwhile.
     fn step_parked(
         &mut self,
@@ -275,11 +341,16 @@ impl StateMachine {
     /// A sample gap longer than `disconnect_after` means the game went away: end the session at the
     /// last sample we saw.
     fn check_gap(&mut self, at: NaiveDateTime, events: &mut Vec<Event>) {
-        let (Some(last), true) = (self.last, self.session.is_some()) else {
+        let Some(last) = self.last else {
             return;
         };
         if at - last.at > self.cfg.disconnect_after {
-            self.end_session_at(last.at, last.odometer_km, SessionStatus::Completed, events);
+            // A reloaded game can show an empty route for a moment: don't read that as arriving.
+            self.near_destination = false;
+            self.cleared_route_samples = 0;
+            if self.session.is_some() {
+                self.end_session_at(last.at, last.odometer_km, SessionStatus::Completed, events);
+            }
         }
     }
 
@@ -312,6 +383,8 @@ impl StateMachine {
                 job: started.clone(),
             });
             self.job = Some(started);
+            self.near_destination = false;
+            self.cleared_route_samples = 0;
         }
         self.open_session(SessionKind::Job, at, s, events);
     }
@@ -380,6 +453,8 @@ impl StateMachine {
             return (SessionStatus::Completed, None);
         };
         let status = self.job_outcome(&job, odometer_km, paused_before);
+        self.near_destination = false;
+        self.cleared_route_samples = 0;
         let event = match status {
             SessionStatus::Completed => Event::JobCompleted {
                 job,
@@ -402,7 +477,11 @@ impl StateMachine {
         odometer_km: f32,
         paused_before: bool,
     ) -> SessionStatus {
-        if paused_before || odometer_km - job.start_odometer_km < self.cfg.min_delivery_km {
+        if self.near_destination {
+            // Within reach of the drop-off: the results screen pauses the game, so a pause here
+            // is the delivery, not a cancel.
+            SessionStatus::Completed
+        } else if paused_before || odometer_km - job.start_odometer_km < self.cfg.min_delivery_km {
             SessionStatus::Cancelled
         } else {
             SessionStatus::Completed
@@ -1173,6 +1252,156 @@ mod tests {
         feed(&mut m, 0, &parked_hauling(500.0));
         assert!(feed(&mut m, 60, &parked_hauling(500.0)).is_empty());
         assert_eq!(m.state(), DrivingState::NotDriving);
+    }
+
+    // ---- owned trailers (#4734) -------------------------------------------------------------
+
+    /// Hauling with the route advisor showing `route_km` left.
+    fn routed(odo: f32, speed: f32, route_km: f32) -> TelemetrySnapshot {
+        let mut j = job("Paris", 4_000);
+        j.route_distance_km = route_km;
+        snap(odo, speed, Some(j))
+    }
+
+    /// On a job with a route, driven up to the drop-off at 300 km (route 0.2 km left, stopped).
+    fn at_the_drop_off() -> StateMachine {
+        let mut m = machine();
+        feed(&mut m, 0, &driving(100.0));
+        feed(&mut m, 1, &driving(100.5));
+        feed(&mut m, 60, &routed(120.0, 80.0, 180.0));
+        feed(&mut m, 3_000, &routed(299.0, 60.0, 1.2));
+        feed(&mut m, 3_060, &routed(300.0, 0.0, 0.2));
+        assert_eq!(m.state(), DrivingState::Delivery);
+        m
+    }
+
+    #[test]
+    fn owned_trailer_delivery_completes_when_the_route_clears() {
+        let mut m = at_the_drop_off();
+        // Results screen: paused, then the route is gone and the trailer is still hitched.
+        assert!(m
+            .step(t(3_070), Some(&paused_routed(300.0, 0.0)))
+            .is_empty());
+        assert!(feed(&mut m, 3_080, &routed(300.0, 0.0, 0.0)).is_empty()); // one sample isn't enough
+        let ev = feed(&mut m, 3_081, &routed(300.0, 0.0, 0.0));
+        assert_eq!(names(&ev), ["end:job", "job-completed", "start:free"]);
+        assert_eq!(
+            ended(&ev),
+            [(SessionKind::Job, SessionStatus::Completed, 180.0)]
+        );
+        assert!(m.active_job().is_none());
+        assert_eq!(m.state(), DrivingState::FreeRoam);
+    }
+
+    fn paused_routed(odo: f32, route_km: f32) -> TelemetrySnapshot {
+        let mut s = routed(odo, 0.0, route_km);
+        s.paused = true;
+        s
+    }
+
+    #[test]
+    fn the_delivered_job_left_in_the_frame_is_not_picked_up_again() {
+        let mut m = at_the_drop_off();
+        feed(&mut m, 3_080, &routed(300.0, 0.0, 0.0));
+        feed(&mut m, 3_081, &routed(300.0, 0.0, 0.0));
+        // Free roam with the stale job fields: no new job, all the km in the free-roam session.
+        for i in 1..=10 {
+            let ev = feed(&mut m, 3_081 + i * 60, &routed(300.0 + i as f32, 70.0, 0.0));
+            assert!(ev.is_empty(), "{ev:?}");
+        }
+        assert!(m.active_job().is_none());
+        assert_eq!(m.state(), DrivingState::FreeRoam);
+        // The next job is a different one and starts normally.
+        let mut next = job("Berlin", 6_500);
+        next.route_distance_km = 400.0;
+        let ev = feed(&mut m, 4_000, &snap(311.0, 40.0, Some(next)));
+        assert_eq!(names(&ev), ["end:free", "job-started", "start:job"]);
+        assert_eq!(
+            ended(&ev),
+            [(SessionKind::FreeRoam, SessionStatus::Completed, 11.0)]
+        );
+    }
+
+    #[test]
+    fn the_same_job_taken_again_after_the_frame_cleared_is_a_new_job() {
+        let mut m = at_the_drop_off();
+        feed(&mut m, 3_080, &routed(300.0, 0.0, 0.0));
+        feed(&mut m, 3_081, &routed(300.0, 0.0, 0.0));
+        feed(&mut m, 3_100, &driving(301.0)); // frame cleared: forget the delivered job
+        let ev = feed(&mut m, 3_200, &routed(302.0, 50.0, 180.0));
+        assert_eq!(names(&ev), ["end:free", "job-started", "start:job"]);
+    }
+
+    #[test]
+    fn a_route_recalculation_mid_trip_does_not_end_the_job() {
+        let mut m = on_a_job();
+        feed(&mut m, 100, &routed(150.0, 80.0, 300.0));
+        for i in 0..5 {
+            assert!(feed(&mut m, 101 + i, &routed(150.5, 80.0, 0.0)).is_empty());
+        }
+        assert!(feed(&mut m, 110, &routed(151.0, 80.0, 299.0)).is_empty());
+        assert!(m.active_job().is_some());
+    }
+
+    #[test]
+    fn a_single_empty_route_sample_near_the_drop_off_is_ignored() {
+        let mut m = at_the_drop_off();
+        assert!(feed(&mut m, 3_070, &routed(300.0, 5.0, 0.0)).is_empty());
+        assert!(feed(&mut m, 3_071, &routed(300.1, 5.0, 0.15)).is_empty());
+        assert!(feed(&mut m, 3_072, &routed(300.1, 0.0, 0.0)).is_empty());
+        assert!(m.active_job().is_some());
+    }
+
+    #[test]
+    fn reconnecting_near_the_drop_off_with_an_empty_route_does_not_deliver() {
+        let mut m = StateMachine::default(); // real 60 s disconnect rule
+        feed(&mut m, 0, &driving(100.0));
+        feed(&mut m, 1, &driving(100.5));
+        feed(&mut m, 2, &routed(101.0, 30.0, 0.9));
+        feed(&mut m, 3, &routed(101.1, 0.0, 0.3));
+        assert!(m.active_job().is_some());
+        // Game closed for ten minutes, then reloaded: the route reads 0 for a few frames.
+        feed(&mut m, 3_660, &routed(300.0, 0.0, 0.0));
+        feed(&mut m, 3_661, &routed(300.0, 0.0, 0.0));
+        feed(&mut m, 3_662, &routed(300.0, 0.0, 0.0));
+        assert!(m.active_job().is_some());
+    }
+
+    #[test]
+    fn a_company_trailer_handed_in_on_the_paused_results_screen_is_delivered() {
+        let mut m = at_the_drop_off();
+        m.step(t(3_070), Some(&paused_routed(300.0, 0.2)));
+        let ev = feed(&mut m, 3_080, &parked(300.0)); // plugin cleared the job meanwhile
+        assert_eq!(names(&ev), ["end:job", "job-completed", "start:free"]);
+        assert_eq!(
+            ended(&ev),
+            [(SessionKind::Job, SessionStatus::Completed, 180.0)]
+        );
+    }
+
+    #[test]
+    fn cancelling_far_from_the_drop_off_is_still_a_cancel() {
+        let mut m = on_a_job();
+        feed(&mut m, 100, &routed(150.0, 80.0, 300.0));
+        m.step(t(110), Some(&paused_routed(150.0, 300.0)));
+        let ev = feed(&mut m, 120, &parked(150.0));
+        assert_eq!(names(&ev), ["end:job", "job-cancelled", "start:free"]);
+    }
+
+    #[test]
+    fn delivering_while_parked_after_the_idle_timeout_is_completed() {
+        let mut m = at_the_drop_off();
+        feed(&mut m, 3_061, &routed(300.0, 0.0, 0.2)); // stopped: idle timer starts
+        let ev = feed(&mut m, 3_061 + 300, &routed(300.0, 0.0, 0.2)); // idle: session ended
+        assert_eq!(names(&ev), ["end:job"]);
+        assert_eq!(m.state(), DrivingState::NotDriving);
+        feed(&mut m, 3_400, &routed(300.0, 0.0, 0.0));
+        let ev = feed(&mut m, 3_401, &routed(300.0, 0.0, 0.0));
+        assert_eq!(names(&ev), ["job-completed"]);
+        assert!(m.active_job().is_none());
+        let ev = feed(&mut m, 3_460, &routed(301.0, 50.0, 0.0));
+        assert_eq!(names(&ev), ["start:free"]); // the stale job isn't a new delivery
+        assert!(m.active_job().is_none());
     }
 
     #[test]
