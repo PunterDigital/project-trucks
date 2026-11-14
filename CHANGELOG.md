@@ -4,6 +4,16 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.9.0 — 2026-11-14
+
+### Features
+- **Your truck on the Hub's live map.** While the app is linked to the ProjectTrucks Hub, the live status now
+  includes where your truck is in the game world and which way it's heading, on a job and while
+  free-roaming. The Hub's new Live map (https://project-trucks.shaypunter.co.uk/map) shows it with your truck
+  and current job. Don't want to be on it? Untick "Show me on the live map" in the Hub's Settings → Profile and
+  the Hub stops storing your position; private profiles never appear.
+  ([#71](https://github.com/PunterDigital/project-trucks/pull/71))
+
 ## v0.8.0 — 2026-11-14
 
 ### Features
