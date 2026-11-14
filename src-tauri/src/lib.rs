@@ -1,5 +1,7 @@
 pub mod commands;
 pub mod db;
+#[cfg(windows)]
+mod e2e_window;
 pub mod hub;
 pub mod plugin_installer;
 pub mod settings;
@@ -127,15 +129,19 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
     }
 
     #[cfg(windows)]
-    if let Some(port) = std::env::var(E2E_CDP_PORT_ENV)
+    let e2e_port = std::env::var(E2E_CDP_PORT_ENV)
         .ok()
-        .and_then(|p| p.parse::<u16>().ok())
-    {
+        .and_then(|p| p.parse::<u16>().ok());
+    #[cfg(windows)]
+    if let Some(port) = e2e_port {
         // E2E runs on Shay's PC while he games: the test window must not take focus or sit in
         // the taskbar, and must keep rendering while the game covers it (Chromium otherwise
-        // throttles occluded windows, which stalls the tests).
+        // throttles occluded windows, which stalls the tests). `focused(false)` only covers
+        // the first show; `focusable(false)` (WS_EX_NOACTIVATE) and the subclass installed
+        // below cover later ones (#4712, see `e2e_window`).
         builder = builder
             .focused(false)
+            .focusable(false)
             .skip_taskbar(true)
             .additional_browser_args(&format!(
                 "{WEBVIEW2_DEFAULT_ARGS},CalculateNativeWinOcclusion \
@@ -143,7 +149,16 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
                  --remote-debugging-port={port}"
             ));
     }
-    builder.build()?;
+    let window = builder.build()?;
+    #[cfg(windows)]
+    if e2e_port.is_some() {
+        let hwnd = window.hwnd()?;
+        if !e2e_window::install(hwnd.0 as _) {
+            tracing::warn!("could not install the E2E no-activate window guard");
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = window;
     Ok(())
 }
 
