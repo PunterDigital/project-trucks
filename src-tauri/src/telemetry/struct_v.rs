@@ -16,8 +16,10 @@ pub const MMF_NAME: &str = "Local\\Ets2TelemetryServer";
 /// Size of the file mapping (`ETS2_PLUGIN_MMF_SIZE`); the frame is the first part of it.
 pub const MMF_SIZE: usize = 16 * 1024;
 /// Plugin revisions whose layout this struct mirrors. Upstream promises later revisions keep the
-/// layout, but we only trust what we have read the header of.
-pub const SUPPORTED_REVISIONS: &[u32] = &[10];
+/// layout, but we only trust what we have checked. The headers are from the rev 10 source, but the
+/// prebuilt DLL we bundle (and install) writes revision 9 with the same rev1–rev4 layout: a frame
+/// captured from it in the real game decodes field for field (#4607, `testdata/plugin-rev9-frame.bin`).
+pub const SUPPORTED_REVISIONS: &[u32] = &[9, 10];
 
 const GENERAL_STRING_SIZE: usize = 64;
 const SHIFTER_TYPE_SIZE: usize = 16;
@@ -541,10 +543,10 @@ mod tests {
     #[test]
     fn rejects_unsupported_and_uninitialised_versions() {
         let mut b = delivery_buf();
-        b.u32(8, 9);
+        b.u32(8, 8);
         assert_eq!(
             TelemetryFrame::from_bytes(&b.0).unwrap_err(),
-            FrameError::UnsupportedRevision(9)
+            FrameError::UnsupportedRevision(8)
         );
         b.u32(8, 11);
         assert_eq!(
@@ -578,5 +580,25 @@ mod tests {
         shifted.extend_from_slice(&b.0);
         let frame = TelemetryFrame::from_bytes(&shifted[1..]).unwrap();
         assert_eq!(frame.truck_make(), "Scania");
+    }
+
+    /// A frame read from the real game (ETS2 1.22 SDK, Nov 14 2026) through the DLL we bundle.
+    /// It reports plugin revision 9; before #4607 every such frame was refused, so auto-capture
+    /// never saw the game.
+    #[test]
+    fn decodes_a_real_frame_from_the_bundled_plugin() {
+        let bytes = include_bytes!("testdata/plugin-rev9-frame.bin");
+        let frame = TelemetryFrame::from_bytes(bytes).unwrap();
+        let snap = frame.to_snapshot();
+        assert_eq!(snap.plugin_revision, 9);
+        assert!(!snap.paused);
+        assert_eq!(frame.truck_make(), "Volvo");
+        assert_eq!(frame.city_src(), "Frankfurt am Main");
+        assert_eq!(frame.city_dst(), "Nynäshamn");
+        assert_eq!(frame.trailer_name(), "Natural Rubber");
+        assert!(snap.truck.trailer_attached);
+        assert!((snap.truck.odometer_km - 514_343.7).abs() < 0.1);
+        assert!(snap.truck.fuel_litres > 0.0);
+        assert!(snap.game_time.is_some());
     }
 }
