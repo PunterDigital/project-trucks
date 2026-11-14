@@ -19,35 +19,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
-            let handle = app.handle().clone();
-            let pool = tauri::async_runtime::block_on(db::init_pool(&handle))?;
-            let telemetry_source = match telemetry::replay::from_env()? {
-                Some((replay, every)) => telemetry::runner::Source::Replay(replay, every),
-                None => telemetry::runner::Source::Live,
-            };
-            app.manage(telemetry::runner::TelemetryStatus::default());
-            tauri::async_runtime::block_on(settings::detect_on_first_run(&pool))?;
-            let saved = tauri::async_runtime::block_on(settings::load(&pool))?;
-            let auto_capture = saved.auto_capture;
-            let (capture_tx, capture_rx) = tokio::sync::watch::channel(auto_capture);
-            app.manage(settings::AutoCapture(capture_tx));
-            tauri::async_runtime::spawn(telemetry::runner::run(
-                handle.clone(),
-                pool.clone(),
-                telemetry_source,
-                capture_rx,
-            ));
-            app.manage(db::AppState { pool });
-            let updater = updater::Updater::new(&handle);
-            updater.clean_old_downloads();
-            app.manage(updater);
-            if saved.check_updates {
-                updater::spawn_launch_check(handle.clone());
-            }
-            create_main_window(app)?;
-            Ok(())
-        })
+        .setup(|app| setup_app(app).inspect_err(|err| show_startup_error(err.as_ref())))
         .invoke_handler(tauri::generate_handler![
             commands::db::db_ping,
             commands::sessions::create_session,
@@ -77,6 +49,36 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let handle = app.handle().clone();
+    let pool = tauri::async_runtime::block_on(db::init_pool(&handle))?;
+    let telemetry_source = match telemetry::replay::from_env()? {
+        Some((replay, every)) => telemetry::runner::Source::Replay(replay, every),
+        None => telemetry::runner::Source::Live,
+    };
+    app.manage(telemetry::runner::TelemetryStatus::default());
+    tauri::async_runtime::block_on(settings::detect_on_first_run(&pool))?;
+    let saved = tauri::async_runtime::block_on(settings::load(&pool))?;
+    let auto_capture = saved.auto_capture;
+    let (capture_tx, capture_rx) = tokio::sync::watch::channel(auto_capture);
+    app.manage(settings::AutoCapture(capture_tx));
+    tauri::async_runtime::spawn(telemetry::runner::run(
+        handle.clone(),
+        pool.clone(),
+        telemetry_source,
+        capture_rx,
+    ));
+    app.manage(db::AppState { pool });
+    let updater = updater::Updater::new(&handle);
+    updater.clean_old_downloads();
+    app.manage(updater);
+    if saved.check_updates {
+        updater::spawn_launch_check(handle.clone());
+    }
+    create_main_window(app)?;
+    Ok(())
 }
 
 /// Env var (Windows only) that opens a Chrome DevTools Protocol port on the
@@ -118,4 +120,48 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
     }
     builder.build()?;
     Ok(())
+}
+
+/// The error and its causes on one line ("a: b: c"), for the startup dialog.
+fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut source = err.source();
+    while let Some(cause) = source {
+        parts.push(cause.to_string());
+        source = cause.source();
+    }
+    parts.join(": ")
+}
+
+/// A failed setup used to end the process before any window existed, so the app
+/// just never appeared (#4601). Tell the user why before Tauri exits. The E2E
+/// suite (CDP port set) gets no dialog, since nobody would close it.
+fn show_startup_error(err: &(dyn std::error::Error + 'static)) {
+    let message = error_chain(err);
+    tracing::error!(%message, "startup failed");
+    #[cfg(windows)]
+    if std::env::var_os(E2E_CDP_PORT_ENV).is_none() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+        let wide = |s: &str| -> Vec<u16> {
+            std::ffi::OsStr::new(s)
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        };
+        let text = wide(&format!(
+            "ProjectTrucks couldn't start.\n\n{message}\n\nPlease report this at \
+             https://github.com/PunterDigital/project-trucks/issues"
+        ));
+        let title = wide("ProjectTrucks");
+        // SAFETY: both strings are NUL-terminated UTF-16 buffers that outlive the call.
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                title.as_ptr(),
+                MB_OK | MB_ICONERROR,
+            );
+        }
+    }
 }
