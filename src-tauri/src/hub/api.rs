@@ -155,6 +155,18 @@ struct SyncResponse {
 pub struct LivePayload {
     pub truck: Option<LiveTruck>,
     pub job: Option<LiveJob>,
+    /// Where the truck is on the game map (#4686), on a job or free-roaming. The Hub drops it
+    /// when the driver turned "Show me on the live map" off.
+    pub position: Option<LivePosition>,
+}
+
+/// SCS world coordinates (metres; x grows east, z grows south) and the heading in degrees,
+/// SCS convention: 0 = north, counter-clockwise.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct LivePosition {
+    pub x: f64,
+    pub z: f64,
+    pub heading_deg: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

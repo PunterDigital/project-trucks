@@ -46,6 +46,9 @@ pub struct TruckSnapshot {
     pub trailer_attached: bool,
     /// World coordinates (x, y, z).
     pub position: (f32, f32, f32),
+    /// Heading as SCS gives it: 0.0 to 1.0 of a full turn, 0 = north, counter-clockwise.
+    #[serde(default)]
+    pub heading: f32,
     pub fuel_litres: f32,
     pub fuel_capacity_litres: f32,
     /// Damage, 0.0 (new) to 1.0 (wrecked).

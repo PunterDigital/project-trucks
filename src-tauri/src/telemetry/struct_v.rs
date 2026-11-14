@@ -293,6 +293,7 @@ impl TelemetryFrame {
                 engine_enabled: r3.engine_enabled != 0,
                 trailer_attached: r1.trailer_attached != 0,
                 position: (r1.coordinate[0], r1.coordinate[1], r1.coordinate[2]),
+                heading: r1.rotation[0],
                 fuel_litres: r1.fuel,
                 fuel_capacity_litres: r1.fuel_capacity,
                 wear_chassis: r3.wear_chassis,
@@ -431,6 +432,7 @@ mod tests {
             .f32(40, 100.5) // rev1.coordinate x
             .f32(44, 12.0)
             .f32(48, -300.25)
+            .f32(52, 0.25) // rev1.rotation heading
             .f32(88, 310.0) // rev1.fuel
             .f32(92, 800.0) // rev1.fuel_capacity
             .i32(160, 7 * 24 * 60 + 10 * 60 + 30) // rev2.time_abs: day 8 (Mon) 10:30
@@ -480,6 +482,7 @@ mod tests {
         assert!(snap.truck.engine_enabled);
         assert!(snap.truck.trailer_attached);
         assert_eq!(snap.truck.position, (100.5, 12.0, -300.25));
+        assert_eq!(snap.truck.heading, 0.25);
         assert_eq!(snap.truck.fuel_litres, 310.0);
         assert_eq!(snap.truck.fuel_capacity_litres, 800.0);
         assert_eq!(snap.truck.wear_trailer, 0.02);

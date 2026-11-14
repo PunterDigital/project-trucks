@@ -344,6 +344,7 @@ mod tests {
                 engine_enabled: true,
                 trailer_attached: job.is_some(),
                 position: (odo * 1000.0, 0.0, 0.0),
+                heading: 0.0,
                 fuel_litres: 300.0,
                 fuel_capacity_litres: 600.0,
                 wear_chassis: 0.0,
