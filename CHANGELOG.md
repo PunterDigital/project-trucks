@@ -4,6 +4,18 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.6.2 — 2026-11-14
+
+### Fixes
+- **The app now opens with a database made by an earlier build.** If the first migration's
+  line endings differed between the build that created your database and the one you
+  installed, ProjectTrucks closed during startup without ever showing a window. It now
+  repairs the recorded checksum and starts normally; if startup still fails for another
+  reason, an error box says why. ([#58](https://github.com/PunterDigital/project-trucks/pull/58))
+
+### Internal
+- Build tooling: @vitejs/plugin-react 6. ([#52](https://github.com/PunterDigital/project-trucks/pull/52))
+
 ## v0.6.1 — 2026-11-09
 
 Maintenance release: no new features or behaviour changes.
