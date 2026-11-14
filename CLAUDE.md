@@ -81,6 +81,15 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
 - The ETS2 telemetry plugin DLLs under `assets/telemetry-plugin/` are third-party binaries. Their
   SHA-256s are in that folder's README; re-check them if the files change.
 - Telemetry (M2) reads a memory-mapped file from the plugin, which is why the app is Windows-only.
+- The bundled `ets2-telemetry-server.dll` is a prebuilt binary that writes plugin **revision 9**, though the headers and
+  source snapshot say 10 (same rev1–rev4 layout). Until #4607 `SUPPORTED_REVISIONS` was `[10]`, so every real frame
+  failed ("unsupported telemetry plugin revision 9", logged at debug only) and the status stayed "not connected"; replay
+  fixtures never go through `from_bytes`, so E2E couldn't see it. `testdata/plugin-rev9-frame.bin` is a frame captured
+  from the real game. To check against a running game: the app in a throwaway profile with auto-capture on, then
+  `get_telemetry_status` over CDP (`RUST_LOG=projecttrucks_lib=debug` shows read errors).
+- On this PC Steam finds the real ETS2 (`D:\SteamLibrary\...`) and the plugin is installed there, so `detect_on_first_run`
+  fills the ETS2 folder in E2E profiles too and `telemetry.spec.ts` "suggests the plugin…" fails locally (no prompt).
+  CI has no ETS2; it passes there.
 - Migrations: sqlx stores each applied migration's SHA-384 and refuses a database whose stored checksum differs from
   the embedded file. Git checked `0001_init.sql` out as CRLF on GitHub's Windows runner and LF locally, so a database
   made by a local build crashed the released app in `setup()` before any window (#4601). `.gitattributes` pins
