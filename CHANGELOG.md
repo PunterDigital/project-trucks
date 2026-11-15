@@ -4,6 +4,23 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.10.0 — 2026-11-15
+
+### Features
+- **A newer telemetry plugin.** ProjectTrucks now installs RenCloud's `scs-telemetry.dll` (v1.12.1, MIT), the
+  plugin most ETS2 trackers use, in place of the 2016 plugin it shipped before. After updating, the app offers
+  **Update** in the plugin prompt (or Settings → Telemetry plugin): that installs the new plugin and removes the old
+  `ets2-telemetry-server.dll` it put there. Other trackers' plugins are left alone. Until you press it, recording
+  keeps working through the old plugin. Checked against a real delivery recorded from the game.
+  ([#78](https://github.com/PunterDigital/project-trucks/pull/78))
+- **Your truck's real model name.** The new plugin reports the model the game shows (e.g. "Volvo FH4" instead of
+  "Volvo STD"), so jobs from before and after this update appear as two trucks on the Trucks page.
+
+### Fixes
+- **Jobs without a deadline are no longer "Late".** External-market jobs have no delivery deadline, but the old
+  plugin's value for "none" read as a date in the past, so every such delivery was recorded as late. They now never
+  count as late. ([#78](https://github.com/PunterDigital/project-trucks/pull/78))
+
 ## v0.9.2 — 2026-11-14
 
 ### Fixes
