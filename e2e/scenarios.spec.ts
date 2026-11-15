@@ -37,7 +37,7 @@ function snapshot(odometerKm: number, speedKmh: number, job: JobSpec | null, ext
   return {
     tick: 0,
     paused: extra.paused ?? false,
-    gameTime: extra.gameTime ?? null,
+    gameTime: (extra.gameTime ?? null) as string | null,
     pluginRevision: 10,
     gameVersion: [1, 55],
     truck: {
@@ -65,9 +65,18 @@ class Shift {
   t = 0;
   odo = 5000;
 
-  /** One sample, `dt` virtual seconds after the previous one. */
+  /**
+   * One sample, `dt` virtual seconds after the previous one. The game clock runs with the
+   * virtual seconds (time scale 1) unless the snapshot sets its own: the average speed is per
+   * in-game hour (#4771).
+   */
   push(dt: number, snap: ReturnType<typeof snapshot> | null) {
     this.t += dt;
+    if (snap && snap.gameTime === null) {
+      snap.gameTime = new Date(Date.UTC(2026, 0, 2, 8, 0, 0) + this.t * 1000)
+        .toISOString()
+        .slice(0, 19);
+    }
     this.samples.push({ t: this.t, snapshot: snap });
   }
 

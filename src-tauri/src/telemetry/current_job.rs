@@ -149,6 +149,8 @@ mod tests {
             truck_model: Some("FH16".into()),
             start_odometer_km: start,
             started_at: at(10, 0),
+            started_game_time: None,
+            wear: Default::default(),
         }
     }
 

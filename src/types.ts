@@ -48,6 +48,9 @@ export interface Job {
   declaredIncome: number;
   distanceKm: number;
   durationSec: number;
+  /** In-game minutes from pickup to delivery (#4771); recorded jobs since 0.11 only. */
+  gameDurationMin: number | null;
+  /** Per in-game hour when `gameDurationMin` is set, else per real hour. */
   avgSpeedKmh: number;
   fuelUsedL: number | null;
   damageDelta: number | null;

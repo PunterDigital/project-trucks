@@ -66,6 +66,13 @@ pub struct JobInProgress {
     pub truck_model: Option<String>,
     pub start_odometer_km: f32,
     pub started_at: NaiveDateTime,
+    /// In-game clock at pickup (#4771), for the job's in-game duration. Jobs saved by an older
+    /// version don't have it.
+    #[serde(default)]
+    pub started_game_time: Option<NaiveDateTime>,
+    /// Fuel burned and damage taken so far (#4771). Saved with the job, so a restart keeps them.
+    #[serde(default)]
+    pub wear: JobWear,
 }
 
 impl JobInProgress {
@@ -73,6 +80,62 @@ impl JobInProgress {
     pub fn same_job(&self, other: &JobSnapshot) -> bool {
         same_job(&self.job, other)
     }
+}
+
+/// Fuel and damage over a job, added up frame by frame: refuelling and repairs mid-job don't
+/// cancel what was used before them (a start/end difference would).
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct JobWear {
+    /// Litres burned.
+    pub fuel_used_l: f32,
+    /// Wear gained, truck chassis plus trailer (each 0.0–1.0 in the game).
+    pub damage: f32,
+    /// At least one frame was counted (jobs saved by an older version have none).
+    pub tracked: bool,
+    /// Readings of the previous frame. Not saved: after a restart the first frame is the new
+    /// baseline, so whatever happened while the app was closed isn't counted.
+    #[serde(skip)]
+    last_fuel_l: Option<f32>,
+    #[serde(skip)]
+    last_chassis: Option<f32>,
+    #[serde(skip)]
+    last_trailer: Option<f32>,
+}
+
+/// A drop bigger than this in one frame isn't driving (another truck, a reloaded save).
+const MAX_FUEL_STEP_L: f32 = 50.0;
+const MAX_WEAR_STEP: f32 = 0.5;
+
+impl JobWear {
+    /// Count one unpaused frame of the job.
+    pub fn track(&mut self, truck: &super::TruckSnapshot) {
+        self.tracked = true;
+        if let Some(prev) = self.last_fuel_l {
+            let burned = prev - truck.fuel_litres;
+            if burned > 0.0 && burned < MAX_FUEL_STEP_L {
+                self.fuel_used_l += burned;
+            }
+        }
+        self.last_fuel_l = Some(truck.fuel_litres);
+        self.damage += gained(&mut self.last_chassis, Some(truck.wear_chassis));
+        // A detached trailer reads 0: only compare frames with the trailer on.
+        let trailer = truck.trailer_attached.then_some(truck.wear_trailer);
+        self.damage += gained(&mut self.last_trailer, trailer);
+    }
+
+    /// The same totals without the previous-frame readings (to tell a real change from a tick).
+    pub fn totals(&self) -> (f32, f32, bool) {
+        (self.fuel_used_l, self.damage, self.tracked)
+    }
+}
+
+fn gained(last: &mut Option<f32>, now: Option<f32>) -> f32 {
+    let step = match (*last, now) {
+        (Some(prev), Some(now)) if now > prev && now - prev < MAX_WEAR_STEP => now - prev,
+        _ => 0.0,
+    };
+    *last = now;
+    step
 }
 
 fn same_job(a: &JobSnapshot, b: &JobSnapshot) -> bool {
@@ -205,6 +268,19 @@ impl StateMachine {
     /// The job that is running or parked, if any.
     pub fn active_job(&self) -> Option<&JobInProgress> {
         self.job.as_ref()
+    }
+
+    /// Count an unpaused frame's fuel and damage on the running job (#4771), when the frame shows
+    /// that job. Call it before [`StateMachine::step`], so the frame that ends a job still counts.
+    pub fn track_wear(&mut self, frame: &TelemetrySnapshot) {
+        if frame.paused {
+            return;
+        }
+        if let (Some(active), Some(job)) = (self.job.as_mut(), frame.job.as_ref()) {
+            if active.same_job(job) {
+                active.wear.track(&frame.truck);
+            }
+        }
     }
 
     /// Feed one sample taken at wall-clock time `at`. `None` means no frame arrived (game closed or
@@ -402,6 +478,8 @@ impl StateMachine {
                 truck_model: s.truck.model.clone(),
                 start_odometer_km: s.truck.odometer_km,
                 started_at: at,
+                started_game_time: s.game_time,
+                wear: JobWear::default(),
             };
             events.push(Event::JobStarted {
                 job: started.clone(),

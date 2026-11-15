@@ -81,6 +81,9 @@ pub struct JobPayload {
     pub declared_income: i64,
     pub distance_km: f64,
     pub duration_sec: i64,
+    /// In-game minutes (#4771): the Hub checks the average speed against these. `null` for jobs
+    /// recorded before 0.11.
+    pub game_duration_min: Option<i64>,
     pub avg_speed_kmh: f64,
     pub fuel_used_l: Option<f64>,
     pub damage_delta: Option<f64>,
@@ -126,6 +129,7 @@ impl From<&Job> for JobPayload {
             declared_income: job.declared_income,
             distance_km: job.distance_km.max(0.0),
             duration_sec: job.duration_sec.max(0),
+            game_duration_min: job.game_duration_min.map(|m| m.max(0)),
             avg_speed_kmh: job.avg_speed_kmh.max(0.0),
             fuel_used_l: job.fuel_used_l.map(|v| v.max(0.0)),
             damage_delta: job.damage_delta.map(|v| v.clamp(0.0, 1.0)),
@@ -380,6 +384,7 @@ mod tests {
             declared_income: 12_450,
             distance_km: 291.4,
             duration_sec: 14_400,
+            game_duration_min: Some(240),
             avg_speed_kmh: 72.8,
             fuel_used_l: Some(95.2),
             damage_delta: Some(1.5),

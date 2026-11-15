@@ -242,7 +242,13 @@ export function JobDetail() {
         <Stat label="Duration" value={formatDuration(job.durationSec)} />
         <Stat
           label="Avg speed"
-          value={`${job.avgSpeedKmh.toFixed(1)} km/h`}
+          value={
+            // Recorded before 0.11: distance / real time, which means nothing for game
+            // kilometres (#4771).
+            job.source === "TELEMETRY" && job.gameDurationMin == null
+              ? "—"
+              : `${job.avgSpeedKmh.toFixed(1)} km/h`
+          }
         />
         <Stat label="Income" value={formatCurrency(job.declaredIncome)} />
       </div>
@@ -264,6 +270,14 @@ export function JobDetail() {
           value={
             job.truckMake && job.truckModel
               ? `${job.truckMake} ${job.truckModel}`
+              : "—"
+          }
+        />
+        <Row
+          label="In-game time"
+          value={
+            job.gameDurationMin != null
+              ? formatDuration(job.gameDurationMin * 60)
               : "—"
           }
         />
