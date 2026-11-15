@@ -16,9 +16,11 @@ export and a one-click database backup. The architectural plan is in
 in [CHANGELOG.md](CHANGELOG.md).
 
 Licensed under **MIT** (see [LICENSE](LICENSE)). The bundled plugin DLL is
-also MIT (built from
-[Funbit/ets2-sdk-plugin](https://github.com/Funbit/ets2-sdk-plugin)) —
-provenance is in [assets/telemetry-plugin/README.md](assets/telemetry-plugin/README.md).
+also MIT ([RenCloud/scs-sdk-plugin](https://github.com/RenCloud/scs-sdk-plugin)
+v1.12.1); provenance is in
+[assets/telemetry-plugin/scs-telemetry/README.md](assets/telemetry-plugin/scs-telemetry/README.md).
+Versions before 0.10 shipped Funbit's plugin
+([assets/telemetry-plugin/README.md](assets/telemetry-plugin/README.md)).
 
 ## Screenshots
 
@@ -57,8 +59,8 @@ because the telemetry plugin only exists for Windows.
 ## Set up live capture from ETS2
 
 ProjectTrucks reads the game through a small telemetry plugin (the MIT-licensed
-[Funbit/ets2-sdk-plugin](https://github.com/Funbit/ets2-sdk-plugin), bundled
-with the app). Once it is installed, every delivery and free-roam drive is
+[RenCloud/scs-sdk-plugin](https://github.com/RenCloud/scs-sdk-plugin)
+`scs-telemetry.dll`, bundled with the app; other trackers use the same one). Once it is installed, every delivery and free-roam drive is
 recorded while you play.
 
 1. Open ProjectTrucks. On first launch it shows **Set up live telemetry?**
@@ -68,8 +70,10 @@ recorded while you play.
    check the **ETS2 folder** (click **Detect**, or paste the folder that holds
    `bin\win_x64\eurotrucks2.exe`), then under **Telemetry plugin** click
    **Install plugin**. The status badge turns to **Installed**. The plugin goes
-   into `<ETS2 folder>\bin\win_x64\plugins`; a different plugin already there is
-   kept as a `.bak`.
+   into `<ETS2 folder>\bin\win_x64\plugins`; a different `scs-telemetry.dll`
+   already there is kept as a `.bak`, and the older plugin earlier ProjectTrucks
+   versions installed (`ets2-telemetry-server.dll`) is removed. Other trackers'
+   plugins are left alone.
 3. Under **Auto-capture**, tick **Record drives and deliveries from ETS2
    automatically**.
 4. Start Euro Truck Simulator 2. The first launch after installing a plugin

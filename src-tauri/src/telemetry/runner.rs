@@ -22,7 +22,6 @@ use super::pipeline::{Created, Pipeline};
 use super::reader::TelemetryReader;
 use super::replay::Replay;
 use super::state_machine::DrivingState;
-use super::struct_v::MMF_NAME;
 use super::TelemetrySnapshot;
 
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -107,7 +106,10 @@ pub async fn run(
                     }
                 }
                 if reader.is_none() {
-                    reader = TelemetryReader::open_named(MMF_NAME, Duration::ZERO).ok();
+                    reader = TelemetryReader::open_any(Duration::ZERO).ok();
+                    if let Some(r) = &reader {
+                        tracing::info!(plugin = ?r.plugin(), "connected to the telemetry plugin");
+                    }
                 }
                 let snapshot = match &reader {
                     Some(r) => match r.read() {

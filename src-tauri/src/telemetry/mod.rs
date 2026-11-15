@@ -1,4 +1,6 @@
-//! ETS2 telemetry: Funbit's plugin writes a memory-mapped frame; this module mirrors it.
+//! ETS2 telemetry: a plugin in the game writes a memory-mapped frame; this module reads it.
+//! RenCloud's scs-telemetry (`struct_scs`) is the one the app ships since #4619; Funbit's
+//! ets2-telemetry-server (`struct_v`) is still read for installs that haven't updated.
 //!
 //! Windows-only at runtime (the plugin and the game are), but the types compile everywhere so the
 //! state machine can be tested anywhere.
@@ -9,9 +11,10 @@ pub mod reader;
 pub mod replay;
 pub mod runner;
 pub mod state_machine;
+pub mod struct_scs;
 pub mod struct_v;
 
-pub use reader::{ReaderError, TelemetryReader};
+pub use reader::{Plugin, ReaderError, TelemetryReader};
 pub use struct_v::{FrameError, TelemetryFrame};
 
 use chrono::NaiveDateTime;

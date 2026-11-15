@@ -1,6 +1,12 @@
 # Bundled telemetry plugin (provenance)
 
-ProjectTrucks ships a prebuilt copy of Funbit's ETS2 telemetry plugin DLL.
+> Since #4619 the app ships RenCloud's `scs-telemetry.dll` instead: see
+> [`scs-telemetry/README.md`](scs-telemetry/README.md). Funbit's plugin below is what versions
+> before 0.10 installed. It stays here because the app still reads its frame (`struct_v.rs`) for
+> players who haven't pressed Update, the installer recognises (and removes) exactly this
+> `win_x64` DLL by its SHA-256, and the provenance trail is worth keeping.
+
+ProjectTrucks shipped a prebuilt copy of Funbit's ETS2 telemetry plugin DLL.
 When the M2 installer copies that DLL into the user's ETS2 install at
 `bin/win_x64/plugins/ets2-telemetry-server.dll`, the game's `scs_sdk_telemetry`
 hook loads it and starts writing a 16 KB telemetry frame to a Windows

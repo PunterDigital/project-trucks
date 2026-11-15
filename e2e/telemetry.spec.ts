@@ -1,5 +1,13 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -207,16 +215,25 @@ test.describe("settings", () => {
       await expect(badge).toHaveText("Installed");
       await expect(install).toBeDisabled();
 
-      const dll = path.join(bin, "plugins", "ets2-telemetry-server.dll");
-      const bundled = path.join(
-        import.meta.dirname,
-        "..",
-        "assets",
-        "telemetry-plugin",
-        "win_x64",
-        "ets2-telemetry-server.dll",
-      );
+      const dll = path.join(bin, "plugins", "scs-telemetry.dll");
+      const assets = path.join(import.meta.dirname, "..", "assets", "telemetry-plugin");
+      const bundled = path.join(assets, "scs-telemetry", "win_x64", "scs-telemetry.dll");
       const sha = (p: string) => createHash("sha256").update(readFileSync(p)).digest("hex");
+      expect(sha(dll)).toBe(sha(bundled));
+
+      // The plugin older versions installed (#4619) is an update; updating removes it and its .bak.
+      const oldDll = path.join(bin, "plugins", "ets2-telemetry-server.dll");
+      copyFileSync(path.join(assets, "win_x64", "ets2-telemetry-server.dll"), oldDll);
+      writeFileSync(oldDll + ".bak", "what was there first");
+      await folder.fill(game + "\\");
+      await folder.blur();
+      await folder.fill(game);
+      await folder.blur();
+      await expect(badge).toHaveText("Outdated");
+      await page.getByRole("button", { name: "Update plugin" }).click();
+      await expect(badge).toHaveText("Installed");
+      expect(existsSync(oldDll)).toBe(false);
+      expect(existsSync(oldDll + ".bak")).toBe(false);
       expect(sha(dll)).toBe(sha(bundled));
 
       // A different DLL is outdated; updating keeps it as .bak.
@@ -238,7 +255,7 @@ test.describe("settings", () => {
 });
 
 test.describe("first-launch plugin prompt", () => {
-  const dllIn = (game: string) => path.join(game, "bin", "win_x64", "plugins", "ets2-telemetry-server.dll");
+  const dllIn = (game: string) => path.join(game, "bin", "win_x64", "plugins", "scs-telemetry.dll");
 
   function fakeEts2(): string {
     const game = mkdtempSync(path.join(tmpdir(), "projecttrucks-fake-ets2-"));
