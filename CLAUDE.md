@@ -269,3 +269,10 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   or capture is switched off. Test profiles only talk to `PROJECTTRUCKS_HUB_URL` (ignored elsewhere) and never open a
   browser; `e2e/hub.spec.ts` serves a stub Hub from Node. The Hub's `/download` page still says syncing "arrives in an
   upcoming update": drop that line in the Hub repo once a release with this ships.
+  Hub status in the app (#4654): `hub_job_states(ids)` (one query over `hub_jobs` + `hub_outbox` via `json_each`) gives
+  each job synced / pending / refused / local (manual) / notSynced; `useJobHubStates` in `src/lib/hub.ts` refetches the
+  visible ids whenever the Hub status counts change, `HubSyncBadge` shows it in `JobsTable`, `JobHubPanel` on the job
+  page. "Hide on Hub" calls `hub_set_hidden` → the Hub's `PATCH /jobs/{id}`; `hub_jobs.hidden` (migration 0005) also
+  follows `hidden` in sync responses (older Hubs send none: kept). The account is refreshed once per start/link from
+  `GET /me` (the link response has no company) for Settings → Hub's company line. Header pill (`hubPill`) only while
+  linked, links to `/settings#hub`.

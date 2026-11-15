@@ -13,6 +13,7 @@ import type {
   DbPing,
   DrivingSession,
   HubStatus,
+  JobHubState,
   Job,
   JobFilter,
   JobPatch,
@@ -78,6 +79,16 @@ export const api = {
 
   /** Opens the approval page ("approve") or the driver's Hub profile ("profile"). */
   hubOpen: (target: "approve" | "profile") => invoke<void>("hub_open", { target }),
+
+  /** Opens one job's page on the Hub. */
+  hubOpenJob: (jobId: string) => invoke<void>("hub_open", { target: "job", jobId }),
+
+  /** Where each job stands with the Hub (empty while unlinked). */
+  hubJobStates: (ids: string[]) => invoke<JobHubState[]>("hub_job_states", { ids }),
+
+  /** "Hide on Hub" / "Show on Hub". */
+  hubSetHidden: (jobId: string, hidden: boolean) =>
+    invoke<JobHubState>("hub_set_hidden", { jobId, hidden }),
 
   // -- Sessions ----
   createSession: (input: NewSession) =>

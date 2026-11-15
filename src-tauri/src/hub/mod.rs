@@ -18,7 +18,7 @@ pub mod live;
 pub mod outbox;
 pub mod token;
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -89,6 +89,8 @@ pub struct Hub {
     /// Bumped by every link start, cancel and unlink, so a stale polling task stops.
     generation: AtomicU64,
     last_error: Mutex<Option<String>>,
+    /// The saved account was refreshed from `GET /me` (company) since start or linking.
+    account_fresh: AtomicBool,
     pub wake: Notify,
     test_profile: bool,
 }
@@ -141,6 +143,7 @@ impl Hub {
             linking: Mutex::new(None),
             generation: AtomicU64::new(0),
             last_error: Mutex::new(None),
+            account_fresh: AtomicBool::new(false),
             wake: Notify::new(),
             test_profile,
         }
@@ -393,6 +396,7 @@ async fn finish_link(
     .map_err(io)?;
     settings::put(pool, KEY_LINKED, "true").await.map_err(io)?;
     *hub.token.lock().expect("hub token lock") = Some(token.to_string());
+    hub.account_fresh.store(false, Ordering::SeqCst);
     tracing::info!(username = ?account.username, "linked to the Hub");
     Ok(())
 }
@@ -436,11 +440,9 @@ async fn drain(
         match client.post_jobs(token, &payload).await {
             Ok(synced) => {
                 for (queued, _) in &batch {
-                    let url = synced
-                        .iter()
-                        .find(|s| s.id == queued.job_id)
-                        .map(|s| s.url.as_str());
-                    outbox::mark_synced(pool, queued, url)
+                    let entry = synced.iter().find(|s| s.id == queued.job_id);
+                    let url = entry.map(|s| s.url.as_str());
+                    outbox::mark_synced(pool, queued, url, entry.and_then(|s| s.hidden))
                         .await
                         .map_err(|e| db(&e))?;
                 }
@@ -455,8 +457,9 @@ async fn drain(
                         .await
                     {
                         Ok(synced) => {
-                            let url = synced.first().map(|s| s.url.as_str());
-                            outbox::mark_synced(pool, queued, url)
+                            let entry = synced.first();
+                            let url = entry.map(|s| s.url.as_str());
+                            outbox::mark_synced(pool, queued, url, entry.and_then(|s| s.hidden))
                                 .await
                                 .map_err(|e| db(&e))?;
                             sent_any = true;
@@ -512,6 +515,25 @@ pub async fn run_sync(app: AppHandle, pool: SqlitePool, hub: Arc<Hub>) {
                     .is_some_and(|e| e.starts_with("Couldn't sync"));
                 if was_transient {
                     hub.set_error(None);
+                }
+                if !hub.account_fresh.load(Ordering::SeqCst) {
+                    match client.me(&token).await {
+                        Ok(account) => {
+                            let _ = settings::put(
+                                &pool,
+                                KEY_ACCOUNT,
+                                &serde_json::to_string(&account).unwrap_or_default(),
+                            )
+                            .await;
+                            hub.account_fresh.store(true, Ordering::SeqCst);
+                        }
+                        Err(HubError::Unauthorized) => {
+                            handle_unauthorized(&app, &pool, &hub).await;
+                            continue;
+                        }
+                        // The account line can wait for the next round.
+                        Err(e) => tracing::debug!(error = %e, "hub /me failed"),
+                    }
                 }
             }
             Err(HubError::Unauthorized) => {
@@ -611,18 +633,25 @@ pub async fn hub_sync_now(
     Ok(refresh(&app, &state.pool, &hub).await)
 }
 
-/// Opens the approval page (while linking) or the driver's profile (while linked) in the browser.
+/// Opens the approval page (while linking), the driver's profile or one job's page (while
+/// linked) in the browser.
 #[tauri::command]
 pub async fn hub_open(
     app: AppHandle,
     state: State<'_, AppState>,
     hub: HubState<'_>,
     target: String,
+    job_id: Option<String>,
 ) -> Result<(), String> {
     let status = refresh(&app, &state.pool, &hub).await;
-    let url = match target.as_str() {
-        "approve" => status.linking.map(|l| l.verification_uri),
-        "profile" => status.account.map(|a| a.profile_url),
+    let url = match (target.as_str(), job_id) {
+        ("approve", _) => status.linking.map(|l| l.verification_uri),
+        ("profile", _) => status.account.map(|a| a.profile_url),
+        ("job", Some(id)) if status.linked => outbox::job_states(&state.pool, &[id])
+            .await
+            .map_err(|e| e.to_string())?
+            .pop()
+            .and_then(|s| s.url),
         _ => None,
     }
     .ok_or("Nothing to open.")?;
@@ -636,6 +665,53 @@ pub async fn hub_open(
     }
     open_url(&app, &url);
     Ok(())
+}
+
+/// Where each of these jobs stands with the Hub (Jobs list, job page). Empty while unlinked.
+#[tauri::command]
+pub async fn hub_job_states(
+    state: State<'_, AppState>,
+    hub: HubState<'_>,
+    ids: Vec<String>,
+) -> Result<Vec<outbox::JobHubState>, String> {
+    if hub.token().is_none() || ids.len() > 500 {
+        return Ok(Vec::new());
+    }
+    outbox::job_states(&state.pool, &ids)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// "Hide on Hub" / "Show on Hub" on the job page.
+#[tauri::command]
+pub async fn hub_set_hidden(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    hub: HubState<'_>,
+    job_id: String,
+    hidden: bool,
+) -> Result<outbox::JobHubState, String> {
+    let (Some(client), Some(token)) = (hub.client.clone(), hub.token()) else {
+        return Err("Link a Hub account first.".into());
+    };
+    match client.set_hidden(&token, &job_id, hidden).await {
+        Ok(stored) => outbox::set_hidden(&state.pool, &job_id, stored)
+            .await
+            .map_err(|e| e.to_string())?,
+        Err(HubError::Unauthorized) => {
+            handle_unauthorized(&app, &state.pool, &hub).await;
+            return Err(HubError::Unauthorized.to_string());
+        }
+        Err(HubError::Rejected { status: 404, .. }) => {
+            return Err("The Hub doesn't have this job yet. Try again once it has synced.".into())
+        }
+        Err(e) => return Err(e.to_string()),
+    }
+    outbox::job_states(&state.pool, std::slice::from_ref(&job_id))
+        .await
+        .map_err(|e| e.to_string())?
+        .pop()
+        .ok_or_else(|| "That job no longer exists.".to_string())
 }
 
 /// Called from `lib.rs` setup.

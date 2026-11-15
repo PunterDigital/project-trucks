@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation } from "react-router-dom";
 import { toast } from "sonner";
 
 import {
@@ -31,6 +32,13 @@ function when(iso: string | null): string {
 export function HubSettings() {
   const status = useHubStatus();
   const [busy, setBusy] = useState(false);
+  const section = useRef<HTMLElement>(null);
+  const { hash } = useLocation();
+
+  // The header pill links to /settings#hub.
+  useEffect(() => {
+    if (hash === "#hub") section.current?.scrollIntoView({ block: "start" });
+  }, [hash]);
 
   const run = async (action: () => Promise<HubStatus>, done?: (s: HubStatus) => void) => {
     setBusy(true);
@@ -51,7 +59,13 @@ export function HubSettings() {
     api.hubOpen(target).catch((e) => toast.error(String(e)));
 
   return (
-    <section className="space-y-3" aria-labelledby="hub-heading" data-testid="hub-settings">
+    <section
+      ref={section}
+      id="hub"
+      className="scroll-mt-4 space-y-3"
+      aria-labelledby="hub-heading"
+      data-testid="hub-settings"
+    >
       <h3 id="hub-heading" className="text-lg font-medium">
         ProjectTrucks Hub
       </h3>
@@ -68,6 +82,11 @@ export function HubSettings() {
               {status.account.username && (
                 <span className="text-muted-foreground"> (@{status.account.username})</span>
               )}
+            </span>
+            <span className="text-muted-foreground" data-testid="hub-company">
+              {status.account.company
+                ? `Company: ${status.account.company.name}${status.account.company.tag ? ` [${status.account.company.tag}]` : ""}`
+                : "No company"}
             </span>
             <Button type="button" variant="outline" size="sm" onClick={() => open("profile")}>
               Open my profile
@@ -105,9 +124,7 @@ export function HubSettings() {
                 size="sm"
                 disabled={busy}
                 onClick={() =>
-                  run(api.hubSyncHistory, () =>
-                    toast.success("Older jobs are syncing to the Hub."),
-                  )
+                  run(api.hubSyncHistory, () => toast.success("Older jobs are syncing to the Hub."))
                 }
               >
                 Sync history ({status.history} older {status.history === 1 ? "job" : "jobs"})
@@ -132,10 +149,7 @@ export function HubSettings() {
             Approve this code on the Hub website. It opened in your browser; if not, click{" "}
             <strong>Open approval page</strong>.
           </p>
-          <p
-            className="font-mono text-3xl font-semibold tracking-widest"
-            data-testid="hub-code"
-          >
+          <p className="font-mono text-3xl font-semibold tracking-widest" data-testid="hub-code">
             {status.linking.userCode}
           </p>
           <div className="flex flex-wrap gap-2">
@@ -171,11 +185,10 @@ export function HubSettings() {
 
       <p className="text-sm text-muted-foreground">
         Share your jobs on the ProjectTrucks Hub: your profile, a company and the leaderboards.
-        Nothing leaves this PC until you link an account. Once linked, new recorded jobs sync
-        by themselves and show on your public profile, along with what you&apos;re driving right
-        now; older jobs only sync if you click Sync history. Jobs you log by hand and job notes
-        always stay on this PC.
-        You can hide jobs or make your profile private on the website.
+        Nothing leaves this PC until you link an account. Once linked, new recorded jobs sync by
+        themselves and show on your public profile, along with what you&apos;re driving right now;
+        older jobs only sync if you click Sync history. Jobs you log by hand and job notes always
+        stay on this PC. You can hide jobs or make your profile private on the website.
       </p>
     </section>
   );

@@ -2,6 +2,7 @@
 //! what it already has. The triggers in the migration fill the outbox; this file reads it and
 //! records the results.
 
+use serde::Serialize;
 use sqlx::SqlitePool;
 
 use crate::commands::jobs::fetch_job;
@@ -93,18 +94,26 @@ pub async fn next_upserts(pool: &SqlitePool, limit: i64) -> anyhow::Result<Vec<(
     Ok(out)
 }
 
+/// The Hub has the job. `hidden` is whether the driver hid it there (`None` from Hubs before
+/// #4654, which keeps what was stored).
 pub async fn mark_synced(
     pool: &SqlitePool,
     queued: &Queued,
     url: Option<&str>,
+    hidden: Option<bool>,
 ) -> Result<(), sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query(
-        "INSERT INTO hub_jobs (job_id, synced_at, hub_url) VALUES (?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?)
-         ON CONFLICT(job_id) DO UPDATE SET synced_at = excluded.synced_at, hub_url = COALESCE(excluded.hub_url, hub_jobs.hub_url)",
+        "INSERT INTO hub_jobs (job_id, synced_at, hub_url, hidden)
+         VALUES (?1, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), ?2, COALESCE(?3, 0))
+         ON CONFLICT(job_id) DO UPDATE SET
+           synced_at = excluded.synced_at,
+           hub_url = COALESCE(excluded.hub_url, hub_jobs.hub_url),
+           hidden = COALESCE(?3, hub_jobs.hidden)",
     )
     .bind(&queued.job_id)
     .bind(url)
+    .bind(hidden)
     .execute(&mut *tx)
     .await?;
     sqlx::query("DELETE FROM hub_outbox WHERE job_id = ? AND queued_at = ?")
@@ -172,6 +181,110 @@ pub async fn queue_history(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
 pub async fn retry_failed(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE hub_outbox SET attempts = 0, last_error = NULL WHERE attempts >= ?")
         .bind(MAX_ATTEMPTS)
+        .execute(pool)
+        .await
+        .map(|_| ())
+}
+
+/// Where one job stands with the Hub, for the Jobs list and the job page (#4654).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobHubState {
+    pub job_id: String,
+    pub state: SyncState,
+    /// The job's page on the Hub, once synced.
+    pub url: Option<String>,
+    /// Hidden on the Hub (only the driver sees it there).
+    pub hidden: bool,
+    /// Why the Hub refused it (`Refused` only).
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SyncState {
+    /// On the Hub, nothing waiting.
+    Synced,
+    /// Queued: new, edited or being deleted.
+    Pending,
+    /// Refused [`MAX_ATTEMPTS`] times; waits for "Retry".
+    Refused,
+    /// Typed in by hand: never leaves this PC (#4751).
+    Local,
+    /// Recorded before linking: only "Sync history" sends it.
+    NotSynced,
+}
+
+fn sync_state(
+    source: &str,
+    synced: bool,
+    queued_attempts: Option<i64>,
+    queued_op: Option<&str>,
+) -> SyncState {
+    match (queued_attempts, queued_op) {
+        (Some(n), Some("upsert")) if n >= MAX_ATTEMPTS => SyncState::Refused,
+        (Some(_), _) => SyncState::Pending,
+        _ if synced => SyncState::Synced,
+        _ if source == "MANUAL" => SyncState::Local,
+        _ => SyncState::NotSynced,
+    }
+}
+
+/// The Hub state of each of `ids` that exists, in no particular order.
+pub async fn job_states(
+    pool: &SqlitePool,
+    ids: &[String],
+) -> Result<Vec<JobHubState>, sqlx::Error> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids_json = serde_json::to_string(ids).unwrap_or_else(|_| "[]".into());
+    type Row = (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<bool>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+    );
+    let rows: Vec<Row> = sqlx::query_as(
+        "SELECT j.id, j.source, h.synced_at, h.hub_url, h.hidden, o.attempts, o.op, o.last_error
+         FROM jobs j
+         LEFT JOIN hub_jobs h ON h.job_id = j.id
+         LEFT JOIN hub_outbox o ON o.job_id = j.id
+         WHERE j.id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(ids_json)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, source, synced_at, url, hidden, attempts, op, error)| {
+                let state = sync_state(&source, synced_at.is_some(), attempts, op.as_deref());
+                JobHubState {
+                    job_id: id,
+                    state,
+                    url,
+                    hidden: hidden.unwrap_or(false),
+                    error: if state == SyncState::Refused {
+                        error
+                    } else {
+                        None
+                    },
+                }
+            },
+        )
+        .collect())
+}
+
+/// The driver hid or showed the job on the Hub from the app.
+pub async fn set_hidden(pool: &SqlitePool, job_id: &str, hidden: bool) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE hub_jobs SET hidden = ? WHERE job_id = ?")
+        .bind(hidden)
+        .bind(job_id)
         .execute(pool)
         .await
         .map(|_| ())
@@ -276,7 +389,7 @@ mod tests {
 
         let batch = next_upserts(&pool, 100).await.unwrap();
         assert_eq!(batch.len(), 1);
-        mark_synced(&pool, &batch[0].0, Some("https://hub/jobs/1"))
+        mark_synced(&pool, &batch[0].0, Some("https://hub/jobs/1"), None)
             .await
             .unwrap();
         assert!(queued(&pool).await.is_empty());
@@ -441,7 +554,67 @@ mod tests {
             flag_reason: None,
         };
         patch_job(&pool, &job.id, flag).await.unwrap();
-        mark_synced(&pool, &sent, None).await.unwrap();
+        mark_synced(&pool, &sent, None, None).await.unwrap();
         assert_eq!(queued(&pool).await, vec![(job.id, "upsert".into())]);
+    }
+
+    async fn state_of(pool: &SqlitePool, id: &str) -> JobHubState {
+        job_states(pool, &[id.to_string()])
+            .await
+            .unwrap()
+            .pop()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn each_job_reports_where_it_stands_with_the_hub() {
+        let pool = pool().await;
+        let old = insert_job(&pool, new_job()).await.unwrap();
+        let manual = insert_job(&pool, manual_job()).await.unwrap();
+        set_linked(&pool, true).await;
+        let fresh = insert_job(&pool, new_job()).await.unwrap();
+
+        assert_eq!(state_of(&pool, &old.id).await.state, SyncState::NotSynced);
+        assert_eq!(state_of(&pool, &manual.id).await.state, SyncState::Local);
+        assert_eq!(state_of(&pool, &fresh.id).await.state, SyncState::Pending);
+        assert!(job_states(&pool, &[]).await.unwrap().is_empty());
+        assert!(job_states(&pool, &["nope".into()])
+            .await
+            .unwrap()
+            .is_empty());
+
+        let row = next_upserts(&pool, 100).await.unwrap().remove(0).0;
+        mark_synced(&pool, &row, Some("https://hub/jobs/7"), Some(true))
+            .await
+            .unwrap();
+        let synced = state_of(&pool, &fresh.id).await;
+        assert_eq!(synced.state, SyncState::Synced);
+        assert_eq!(synced.url.as_deref(), Some("https://hub/jobs/7"));
+        assert!(synced.hidden);
+
+        // An edit queues it again. An older Hub says nothing about `hidden`: what was stored stays.
+        let flag = |on: bool| JobPatch {
+            notes: None,
+            flagged: Some(on),
+            flag_reason: None,
+        };
+        patch_job(&pool, &fresh.id, flag(true)).await.unwrap();
+        assert_eq!(state_of(&pool, &fresh.id).await.state, SyncState::Pending);
+        let row = next_upserts(&pool, 100).await.unwrap().remove(0).0;
+        mark_synced(&pool, &row, None, None).await.unwrap();
+        assert!(state_of(&pool, &fresh.id).await.hidden);
+        set_hidden(&pool, &fresh.id, false).await.unwrap();
+        assert!(!state_of(&pool, &fresh.id).await.hidden);
+
+        // Refusals show with their reason.
+        patch_job(&pool, &fresh.id, flag(false)).await.unwrap();
+        let row = next_upserts(&pool, 100).await.unwrap().remove(0).0;
+        for _ in 0..MAX_ATTEMPTS {
+            mark_failed(&pool, &row, "Too fast.").await.unwrap();
+        }
+        let refused = state_of(&pool, &fresh.id).await;
+        assert_eq!(refused.state, SyncState::Refused);
+        assert_eq!(refused.error.as_deref(), Some("Too fast."));
+        assert_eq!(refused.url.as_deref(), Some("https://hub/jobs/7"));
     }
 }

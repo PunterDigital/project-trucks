@@ -48,6 +48,17 @@ pub struct HubAccount {
     pub username: Option<String>,
     #[serde(alias = "profile_url")]
     pub profile_url: String,
+    /// The driver's company, from `GET /me` (#4654). The link response doesn't carry it.
+    #[serde(default)]
+    pub company: Option<HubCompany>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubCompany {
+    pub name: String,
+    #[serde(default)]
+    pub tag: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -147,6 +158,14 @@ impl From<&Job> for JobPayload {
 pub struct SyncedJob {
     pub id: String,
     pub url: String,
+    /// Hidden on the Hub by the driver (Hub #30; `None` from older Hubs).
+    #[serde(default)]
+    pub hidden: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct HiddenResponse {
+    hidden: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,6 +343,34 @@ impl HubClient {
         }
     }
 
+    /// "Hide on Hub": returns what the Hub stored. 404 = the Hub doesn't have the job.
+    pub async fn set_hidden(&self, token: &str, id: &str, hidden: bool) -> Result<bool, HubError> {
+        let response = self
+            .send(
+                self.http
+                    .patch(self.url(&format!("jobs/{id}")))
+                    .bearer_auth(token)
+                    .json(&serde_json::json!({ "hidden": hidden })),
+            )
+            .await?;
+        let parsed: HiddenResponse = response
+            .json()
+            .await
+            .map_err(|e| HubError::Network(e.to_string()))?;
+        Ok(parsed.hidden)
+    }
+
+    /// Who the token belongs to, with the company.
+    pub async fn me(&self, token: &str) -> Result<HubAccount, HubError> {
+        let response = self
+            .send(self.http.get(self.url("me")).bearer_auth(token))
+            .await?;
+        response
+            .json()
+            .await
+            .map_err(|e| HubError::Network(e.to_string()))
+    }
+
     pub async fn put_status(&self, token: &str, payload: &LivePayload) -> Result<(), HubError> {
         self.send(
             self.http
@@ -438,5 +485,37 @@ mod tests {
         }
         .is_transient());
         assert!(!HubError::Unauthorized.is_transient());
+    }
+
+    #[test]
+    fn me_and_sync_answers_parse() {
+        // `GET /me` as the Hub sends it (extra fields ignored).
+        let me: HubAccount = serde_json::from_str(
+            r#"{"id":3,"name":"Erin","username":"erin","avatar":null,
+                "company":{"name":"Chart Haulage","slug":"chart","tag":"CHT"},
+                "profile_url":"https://hub/drivers/erin","profile_private":false,"jobs_synced":4}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            me.company,
+            Some(HubCompany {
+                name: "Chart Haulage".into(),
+                tag: Some("CHT".into())
+            })
+        );
+        let solo: HubAccount =
+            serde_json::from_str(r#"{"name":"Erin","profile_url":"x","company":null}"#).unwrap();
+        assert_eq!(solo.company, None);
+        // Saved accounts from before #4654 (camelCase, no company) still load.
+        let saved: HubAccount =
+            serde_json::from_str(r#"{"name":"Erin","username":"erin","profileUrl":"x"}"#).unwrap();
+        assert_eq!(saved.company, None);
+
+        let old: SyncedJob = serde_json::from_str(r#"{"id":"a","url":"u"}"#).unwrap();
+        assert_eq!(old.hidden, None);
+        let new: SyncedJob =
+            serde_json::from_str(r#"{"id":"a","url":"u","hidden":true,"hub_flag_reason":null}"#)
+                .unwrap();
+        assert_eq!(new.hidden, Some(true));
     }
 }
