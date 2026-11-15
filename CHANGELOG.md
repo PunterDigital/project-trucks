@@ -4,6 +4,33 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.11.0 — 2026-11-16
+
+### Features
+- **Hub status inside the app.** Once the app is linked to ProjectTrucks Hub, the Jobs list shows a badge on each
+  recorded job (on the Hub, syncing, or refused, with the reason on hover), and the job page has a "ProjectTrucks Hub"
+  section with **Open on the Hub** and a **Hide on Hub** checkbox. A pill in the header shows your Hub username,
+  how many jobs are still syncing or were refused, or that the Hub is offline; it opens Settings → Hub, which now
+  also shows your company. ([#82](https://github.com/PunterDigital/project-trucks/pull/82))
+- **Fuel used and damage are recorded.** Recorded jobs now fill in the fuel burned and the damage picked up on the
+  way (truck and trailer). Refuels and repairs during the job don't cancel them out.
+  ([#81](https://github.com/PunterDigital/project-trucks/pull/81))
+- **In-game time on the job page.** Each recorded job shows how long it took on the game's clock.
+  ([#81](https://github.com/PunterDigital/project-trucks/pull/81))
+
+### Fixes
+- **Average speed is no longer hundreds of km/h.** The game's kilometres pass much faster than real time, so
+  dividing them by real minutes gave averages like 1,004 km/h and flagged nearly every delivery. The average is now
+  per in-game hour, and jobs that were flagged only for speed are un-flagged after updating. Jobs recorded before
+  this version have no in-game time, so their average shows "—".
+  ([#81](https://github.com/PunterDigital/project-trucks/pull/81))
+- **Jobs you add by hand stay on this PC.** Manually logged jobs are no longer sent to the Hub, and ones that were
+  already there are removed from it. Recorded jobs sync as before.
+  ([#80](https://github.com/PunterDigital/project-trucks/pull/80))
+
+### Maintenance
+- Weekly dependency updates. ([#83](https://github.com/PunterDigital/project-trucks/pull/83))
+
 ## v0.10.0 — 2026-11-15
 
 ### Features
