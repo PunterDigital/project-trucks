@@ -155,7 +155,16 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   deadline (`deadline: None`, never late).
 - E2E teardown can flake on Windows: `rmSync` of the data dir fails while WebView2 still holds a file. A rerun passes.
 - Recorded (telemetry) jobs are sanity-checked in `insert_job_row` (`sanity_flag` in `commands/jobs.rs`): average speed over
-  150 km/h or distance under 1 km sets `flagged` + `flag_reason`; manual entries are never auto-flagged. The Jobs list and
+  150 km/h or distance under 1 km sets `flagged` + `flag_reason`; manual entries are never auto-flagged.
+  Speed is per **in-game** hour (#4771): ETS2's odometer counts game km, ~19 per real km on roads (Shay's recorded
+  delivery: 123.8 km in 11 real minutes = 663 km/h, 104 game minutes = 71 km/h), so distance / real time flagged every
+  real job. `JobInProgress.started_game_time` + the completing frame's clock give `jobs.game_duration_min`; every
+  recorded job must also stay under `MAX_PLAUSIBLE_REAL_KMH` (3,000 km per real hour, same as the Hub). Without a game
+  time (jobs from before 0.11) the average is per real hour and the job page shows "—". Migration 0004 cleared the old
+  speed-only flags that pass the real-time limit. Fuel used and damage delta are summed frame by frame on the running
+  job (`JobWear`: refuels, repairs and a detached trailer don't count; saved with the job at most every 30 s when only
+  they change); damage = truck chassis + trailer wear gained.
+  E2E replays without a `gameTime` get a game clock that runs with the virtual seconds (`scenarios.spec.ts` `push`). The Jobs list and
   job page show a "Flagged" badge. `e2e/scenarios.spec.ts` replays a whole shift (cancel, on-time, ferry teleport, alt-tab gap,
   fast delivery) with a `Shift` builder; the first 1.2 km of a job are driven before the job is seen, so distances are 10.8 not 12.
 - Recorded cancels (#2513) get a job row with status `CANCELLED` linked to their `JOB`/`CANCELLED` session (also when cancelled

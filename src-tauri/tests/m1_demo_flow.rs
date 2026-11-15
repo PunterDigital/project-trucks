@@ -57,6 +57,7 @@ fn manual_job(
         declared_income: income,
         distance_km: distance,
         duration_sec: (distance * 60.0) as i64, // ≈ 60 km/h
+        game_duration_min: None,
         fuel_used_l: None,
         damage_delta: None,
         started_at: Utc

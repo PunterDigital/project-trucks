@@ -84,6 +84,9 @@ pub struct Job {
     pub declared_income: i64,
     pub distance_km: f64,
     pub duration_sec: i64,
+    /// In-game minutes from pickup to delivery (#4771). Recorded jobs only, and only those
+    /// recorded since 0.11 (`None` before, and for manual entries).
+    pub game_duration_min: Option<i64>,
     pub avg_speed_kmh: f64,
     pub fuel_used_l: Option<f64>,
     pub damage_delta: Option<f64>,
@@ -206,6 +209,10 @@ pub struct NewJob {
     pub declared_income: i64,
     pub distance_km: f64,
     pub duration_sec: i64,
+    /// In-game minutes from pickup to delivery; the telemetry pipeline sets it, the manual form
+    /// leaves it out.
+    #[serde(default)]
+    pub game_duration_min: Option<i64>,
     pub fuel_used_l: Option<f64>,
     pub damage_delta: Option<f64>,
     pub started_at: DateTime<Utc>,
@@ -251,6 +258,7 @@ mod tests {
             declared_income: 4250,
             distance_km: 290.7,
             duration_sec: 14_400,
+            game_duration_min: None,
             avg_speed_kmh: 72.675,
             fuel_used_l: Some(95.5),
             damage_delta: Some(0.02),
@@ -420,6 +428,7 @@ mod tests {
             declared_income: 3100,
             distance_km: 465.0,
             duration_sec: 18_000,
+            game_duration_min: None,
             fuel_used_l: None,
             damage_delta: None,
             started_at: Utc.with_ymd_and_hms(2026, 5, 2, 10, 0, 0).unwrap(),

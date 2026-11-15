@@ -36,12 +36,21 @@ pub async fn insert_job(pool: &SqlitePool, input: NewJob) -> Result<Job> {
 /// refreshes the truck rollup after committing.
 pub async fn insert_job_row(conn: &mut SqliteConnection, input: NewJob) -> Result<Job> {
     let id = format!("job_{}", Uuid::new_v4().simple());
-    let avg_speed_kmh = compute_avg_speed(input.distance_km, input.duration_sec);
+    let avg_speed_kmh = compute_avg_speed(
+        input.distance_km,
+        input.duration_sec,
+        input.game_duration_min,
+    );
     // Manual entries are the user's own numbers; only recorded deliveries get sanity-checked
     // (a recorded cancel is often under 1 km on purpose: dropped right after pickup).
     let flag_reason =
         if input.source == JobSource::Telemetry && input.status != JobStatus::Cancelled {
-            sanity_flag(input.distance_km, input.duration_sec, avg_speed_kmh)
+            sanity_flag(
+                input.distance_km,
+                input.duration_sec,
+                input.game_duration_min,
+                avg_speed_kmh,
+            )
         } else {
             None
         };
@@ -52,14 +61,14 @@ pub async fn insert_job_row(conn: &mut SqliteConnection, input: NewJob) -> Resul
            (id, session_id, truck_make, truck_model,
             source_city, source_company, dest_city, dest_company,
             cargo_id, cargo_name, cargo_mass_kg, declared_income,
-            distance_km, duration_sec, avg_speed_kmh,
+            distance_km, duration_sec, game_duration_min, avg_speed_kmh,
             fuel_used_l, damage_delta,
             started_at, completed_at, status, source,
             flagged, flag_reason, notes)
          VALUES (?, ?, ?, ?,
                  ?, ?, ?, ?,
                  ?, ?, ?, ?,
-                 ?, ?, ?,
+                 ?, ?, ?, ?,
                  ?, ?,
                  ?, ?, ?, ?,
                  ?, ?, ?)",
@@ -78,6 +87,7 @@ pub async fn insert_job_row(conn: &mut SqliteConnection, input: NewJob) -> Resul
     .bind(input.declared_income)
     .bind(input.distance_km)
     .bind(input.duration_sec)
+    .bind(input.game_duration_min)
     .bind(avg_speed_kmh)
     .bind(input.fuel_used_l)
     .bind(input.damage_delta)
@@ -107,6 +117,7 @@ pub async fn insert_job_row(conn: &mut SqliteConnection, input: NewJob) -> Resul
         declared_income: input.declared_income,
         distance_km: input.distance_km,
         duration_sec: input.duration_sec,
+        game_duration_min: input.game_duration_min,
         avg_speed_kmh,
         fuel_used_l: input.fuel_used_l,
         damage_delta: input.damage_delta,
@@ -120,18 +131,39 @@ pub async fn insert_job_row(conn: &mut SqliteConnection, input: NewJob) -> Resul
     })
 }
 
-/// A recorded delivery above this average speed probably had a teleport or a bad odometer reading.
+/// A recorded delivery above this average speed (per in-game hour) probably had a teleport or a
+/// bad odometer reading.
 pub const MAX_PLAUSIBLE_AVG_KMH: f64 = 150.0;
+/// Kilometres per **real** hour no delivery can reach (#4771). The game's odometer counts game
+/// kilometres, which pass ~19x faster than real time on roads, so a real-time average of several
+/// hundred km/h is normal; 150 km/h at the top time scale (~20x) is 3,000. The Hub uses the same
+/// number (`max_real_km_per_hour` in its `config/anticheat.php`).
+pub const MAX_PLAUSIBLE_REAL_KMH: f64 = 3_000.0;
 /// A recorded delivery shorter than this is probably a job picked up and dropped, or a glitch.
 pub const MIN_PLAUSIBLE_KM: f64 = 1.0;
 
-/// Reason a recorded delivery looks suspicious, if it does.
-pub fn sanity_flag(distance_km: f64, duration_sec: i64, avg_speed_kmh: f64) -> Option<String> {
+/// Reason a recorded delivery looks suspicious, if it does. `avg_speed_kmh` is per in-game hour
+/// when `game_duration_min` is known; without it (recorded before 0.11) only the real-time limit
+/// applies.
+pub fn sanity_flag(
+    distance_km: f64,
+    duration_sec: i64,
+    game_duration_min: Option<i64>,
+    avg_speed_kmh: f64,
+) -> Option<String> {
     let mut reasons = Vec::new();
     if distance_km < MIN_PLAUSIBLE_KM {
         reasons.push(format!("Distance under {MIN_PLAUSIBLE_KM:.0} km"));
     }
-    if duration_sec > 0 && avg_speed_kmh > MAX_PLAUSIBLE_AVG_KMH {
+    let too_fast_for_game_time = match game_duration_min {
+        Some(m) if m > 0 => avg_speed_kmh > MAX_PLAUSIBLE_AVG_KMH,
+        // Kilometres with no game time at all.
+        Some(_) => distance_km >= MIN_PLAUSIBLE_KM,
+        None => false,
+    };
+    let too_fast_for_real_time =
+        duration_sec > 0 && real_km_per_hour(distance_km, duration_sec) > MAX_PLAUSIBLE_REAL_KMH;
+    if too_fast_for_game_time || too_fast_for_real_time {
         reasons.push(format!(
             "Average speed over {MAX_PLAUSIBLE_AVG_KMH:.0} km/h"
         ));
@@ -143,7 +175,17 @@ pub fn sanity_flag(distance_km: f64, duration_sec: i64, avg_speed_kmh: f64) -> O
     }
 }
 
-fn compute_avg_speed(distance_km: f64, duration_sec: i64) -> f64 {
+/// Average speed: distance per in-game hour when the game time is known (#4771), else per real
+/// hour (manual entries, and recorded jobs from before 0.11).
+fn compute_avg_speed(distance_km: f64, duration_sec: i64, game_duration_min: Option<i64>) -> f64 {
+    match game_duration_min {
+        Some(m) if m > 0 => distance_km / (m as f64 / 60.0),
+        Some(_) => 0.0,
+        None => real_km_per_hour(distance_km, duration_sec),
+    }
+}
+
+fn real_km_per_hour(distance_km: f64, duration_sec: i64) -> f64 {
     if duration_sec <= 0 {
         return 0.0;
     }
@@ -370,6 +412,7 @@ mod tests {
             declared_income: 4250,
             distance_km: 290.0,
             duration_sec: 14_400, // 4h
+            game_duration_min: None,
             fuel_used_l: Some(95.5),
             damage_delta: Some(0.02),
             started_at: Utc.with_ymd_and_hms(2026, 5, 1, 10, 0, 0).unwrap(),
@@ -382,23 +425,55 @@ mod tests {
 
     #[test]
     fn avg_speed_handles_zero_duration() {
-        assert_eq!(compute_avg_speed(100.0, 0), 0.0);
-        assert_eq!(compute_avg_speed(100.0, -1), 0.0);
+        assert_eq!(compute_avg_speed(100.0, 0, None), 0.0);
+        assert_eq!(compute_avg_speed(100.0, -1, None), 0.0);
+        assert_eq!(compute_avg_speed(100.0, 3_600, Some(0)), 0.0);
+    }
+
+    #[test]
+    fn avg_speed_is_per_in_game_hour_when_the_game_time_is_known() {
+        // #4771, Shay's Algeciras → Rotterdam: 2,455.2 km in 2 h 27 min of real time is 1,004.7
+        // km per real hour; over ~46.5 in-game hours it's ~53 km/h.
+        assert!((compute_avg_speed(2_455.2, 8_797, Some(2_790)) - 52.8).abs() < 0.01);
+        assert!((compute_avg_speed(2_455.2, 8_797, None) - 1_004.7).abs() < 0.1);
     }
 
     #[test]
     fn sanity_flag_catches_fast_and_tiny_deliveries() {
-        assert_eq!(sanity_flag(290.0, 14_400, 72.5), None);
+        assert_eq!(sanity_flag(290.0, 14_400, Some(240), 72.5), None);
+        // Per in-game hour.
         assert_eq!(
-            sanity_flag(400.0, 7_200, 200.0).as_deref(),
+            sanity_flag(400.0, 7_200, Some(120), 200.0).as_deref(),
+            Some("Average speed over 150 km/h")
+        );
+        // A long real delivery: hundreds of km per real hour, fine per in-game hour.
+        assert_eq!(sanity_flag(2_455.2, 8_797, Some(2_790), 52.8), None);
+        // Kilometres with no game time.
+        assert_eq!(
+            sanity_flag(50.0, 600, Some(0), 0.0).as_deref(),
+            Some("Average speed over 150 km/h")
+        );
+        // More km per real hour than any time scale allows, whatever the game time says.
+        assert_eq!(
+            sanity_flag(3_500.0, 3_600, Some(2_880), 72.9).as_deref(),
+            Some("Average speed over 150 km/h")
+        );
+        // No game time (recorded before 0.11): only the real-time limit.
+        assert_eq!(sanity_flag(2_455.2, 8_797, None, 1_004.7), None);
+        assert_eq!(
+            sanity_flag(3_500.0, 3_600, None, 3_500.0).as_deref(),
             Some("Average speed over 150 km/h")
         );
         assert_eq!(
-            sanity_flag(0.4, 600, 2.4).as_deref(),
+            sanity_flag(0.4, 600, Some(10), 2.4).as_deref(),
             Some("Distance under 1 km")
         );
         assert_eq!(
-            sanity_flag(0.5, 10, 180.0).as_deref(),
+            sanity_flag(0.5, 0, Some(0), 0.0).as_deref(),
+            Some("Distance under 1 km")
+        );
+        assert_eq!(
+            sanity_flag(0.9, 1, Some(0), 0.0).as_deref(),
             Some("Distance under 1 km; Average speed over 150 km/h")
         );
     }
@@ -409,6 +484,7 @@ mod tests {
         let mut fast = sample_job(None);
         fast.distance_km = 500.0;
         fast.duration_sec = 7_200;
+        fast.game_duration_min = Some(120);
         fast.source = JobSource::Telemetry;
         let flagged = insert_job(&pool, fast.clone()).await.unwrap();
         assert!(flagged.flagged);
@@ -425,7 +501,8 @@ mod tests {
 
     #[test]
     fn avg_speed_basic_math() {
-        assert!((compute_avg_speed(290.0, 14_400) - 72.5).abs() < 1e-9);
+        assert!((compute_avg_speed(290.0, 14_400, None) - 72.5).abs() < 1e-9);
+        assert!((compute_avg_speed(290.0, 600, Some(240)) - 72.5).abs() < 1e-9);
     }
 
     #[tokio::test]

@@ -455,6 +455,7 @@ mod tests {
             declared_income: income,
             distance_km: km,
             duration_sec: 3_600 * 4,
+            game_duration_min: None,
             fuel_used_l: None,
             damage_delta: None,
             started_at: completed_at - Duration::hours(4),

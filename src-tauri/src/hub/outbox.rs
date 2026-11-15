@@ -232,6 +232,7 @@ mod tests {
             declared_income: 12_000,
             distance_km: 290.0,
             duration_sec: 14_400,
+            game_duration_min: None,
             fuel_used_l: None,
             damage_delta: None,
             started_at: Utc.with_ymd_and_hms(2026, 11, 14, 10, 0, 0).unwrap(),

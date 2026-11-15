@@ -45,7 +45,12 @@ pub struct Pipeline {
     parked_job_session: Option<String>,
     /// What was last saved (or loaded), so unchanged state isn't written every tick.
     saved: Saved,
+    /// When the job was last saved, to save fuel/damage-only changes less often.
+    wear_saved_at: Option<NaiveDateTime>,
 }
+
+/// How often a job whose fuel or damage changed (and nothing else) is saved.
+const WEAR_SAVE_EVERY: chrono::Duration = chrono::Duration::seconds(30);
 
 impl Default for Pipeline {
     fn default() -> Self {
@@ -62,6 +67,7 @@ impl Pipeline {
             machine: StateMachine::new(cfg),
             parked_job_session: None,
             saved: (None, None),
+            wear_saved_at: None,
         }
     }
 
@@ -106,25 +112,43 @@ impl Pipeline {
         at: NaiveDateTime,
         frame: Option<&TelemetrySnapshot>,
     ) -> Result<Vec<Created>> {
+        if let Some(f) = frame {
+            self.machine.track_wear(f);
+        }
         let events = self.machine.step(at, frame);
         let game_time = frame.and_then(|f| f.game_time);
         let created = self.apply(pool, events, game_time).await?;
-        self.save(pool).await?;
+        self.save(pool, at).await?;
         Ok(created)
     }
 
-    /// Save the job in progress and the delivered job when either changed.
-    async fn save(&mut self, pool: &SqlitePool) -> Result<()> {
+    /// Save the job in progress and the delivered job when either changed. Fuel and damage move
+    /// on almost every frame, so a change in those alone is saved at most every
+    /// [`WEAR_SAVE_EVERY`] (a restart loses at most that much of them).
+    async fn save(&mut self, pool: &SqlitePool, at: NaiveDateTime) -> Result<()> {
         let now: Saved = (
             self.machine.active_job().cloned(),
             self.machine.delivered_job().cloned(),
         );
-        if now == self.saved {
-            return Ok(());
+        let totals = |s: &Saved| s.0.as_ref().map(|j| j.wear.totals());
+        let without_wear = |s: &Saved| {
+            let mut s = s.clone();
+            if let Some(j) = s.0.as_mut() {
+                j.wear = Default::default();
+            }
+            s
+        };
+        if without_wear(&now) == without_wear(&self.saved) {
+            let wear_moved = totals(&now) != totals(&self.saved);
+            let due = self.wear_saved_at.is_none_or(|t| at - t >= WEAR_SAVE_EVERY);
+            if !wear_moved || !due {
+                return Ok(());
+            }
         }
         store(pool, KEY_ACTIVE_JOB, now.0.as_ref()).await?;
         store(pool, KEY_DELIVERED_JOB, now.1.as_ref()).await?;
         self.saved = now;
+        self.wear_saved_at = Some(at);
         Ok(())
     }
 
@@ -353,8 +377,20 @@ fn new_job(
         declared_income: i64::from(j.job.income),
         distance_km: f64::from((end_odometer_km - j.start_odometer_km).max(0.0)),
         duration_sec: (ended_at - j.started_at).num_seconds().max(0),
-        fuel_used_l: None,
-        damage_delta: None,
+        // The odometer counts game kilometres, so the average speed needs game time (#4771).
+        game_duration_min: match (j.started_game_time, game_time) {
+            (Some(start), Some(end)) => Some((end - start).num_minutes().max(0)),
+            _ => None,
+        },
+        // Added up frame by frame (#4771); none for a job restored from an older version's save.
+        fuel_used_l: j
+            .wear
+            .tracked
+            .then(|| (f64::from(j.wear.fuel_used_l) * 10.0).round() / 10.0),
+        damage_delta: j
+            .wear
+            .tracked
+            .then(|| (f64::from(j.wear.damage).min(1.0) * 1000.0).round() / 1000.0),
         started_at: j.started_at.and_utc(),
         completed_at: ended_at.and_utc(),
         status,
@@ -827,5 +863,131 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    /// #4771: the delivery Shay drove on Nov 15 (123.8 km on the odometer in ~11 real minutes,
+    /// 104 in-game minutes). Per real hour that's ~660 km/h and it was flagged; per in-game
+    /// hour it's ~71 km/h. Fuel and damage come from the frames too.
+    #[tokio::test]
+    async fn the_recorded_delivery_gets_game_time_speed_fuel_and_damage() {
+        let pool = test_pool().await;
+        let replay: crate::telemetry::replay::Replay =
+            serde_json::from_str(include_str!("testdata/scs-recorded-delivery.json")).unwrap();
+        let mut p = Pipeline::default();
+        let mut created = Vec::new();
+        for s in &replay.samples {
+            let at = t((s.t * 1000.0) as i64 / 1000);
+            created.extend(p.step(&pool, at, s.snapshot.as_ref()).await.unwrap());
+        }
+        // Leave the results screen (see the struct_scs test): the last frame, unpaused.
+        let last = replay.samples.last().unwrap();
+        let mut resumed = last.snapshot.clone().unwrap();
+        resumed.paused = false;
+        let at = t(last.t as i64 + 1);
+        created.extend(p.step(&pool, at, Some(&resumed)).await.unwrap());
+
+        let j = jobs(&created);
+        assert_eq!(j.len(), 1);
+        let job = j[0];
+        assert!((job.distance_km - 123.8).abs() < 0.2, "{}", job.distance_km);
+        let game_min = job.game_duration_min.expect("game time recorded");
+        assert!((100..=106).contains(&game_min), "{game_min} game minutes");
+        assert!(
+            (60.0..80.0).contains(&job.avg_speed_kmh),
+            "{} km/h",
+            job.avg_speed_kmh
+        );
+        assert!(!job.flagged, "{:?}", job.flag_reason);
+        let fuel = job.fuel_used_l.expect("fuel counted");
+        assert!(fuel > 10.0 && fuel < 100.0, "{fuel} L");
+        let damage = job.damage_delta.expect("damage counted");
+        assert!((0.0..=1.0).contains(&damage), "{damage}");
+    }
+
+    #[test]
+    fn wear_ignores_refuels_repairs_and_a_detached_trailer() {
+        use crate::telemetry::state_machine::JobWear;
+        let mut w = JobWear::default();
+        let mut truck = snap(100.0, 50.0, Some(job())).truck;
+        let mut frame = |fuel: f32, chassis: f32, trailer: f32, attached: bool| {
+            truck.fuel_litres = fuel;
+            truck.wear_chassis = chassis;
+            truck.wear_trailer = trailer;
+            truck.trailer_attached = attached;
+            w.track(&truck);
+        };
+        frame(500.0, 0.10, 0.02, true);
+        frame(490.0, 0.12, 0.03, true); // 10 L, +0.02 + 0.01
+        frame(790.0, 0.12, 0.03, true); // refuelled: nothing used
+        frame(780.0, 0.00, 0.00, false); // repaired, trailer off: 10 L
+        frame(770.0, 0.01, 0.05, true); // +0.01 truck; the trailer is a new baseline
+        let (fuel, damage, tracked) = w.totals();
+        assert!(tracked);
+        assert!((fuel - 30.0).abs() < 1e-3, "{fuel}");
+        assert!((damage - 0.04).abs() < 1e-4, "{damage}");
+    }
+
+    #[tokio::test]
+    async fn old_speed_flags_are_cleared_by_the_migration_sql() {
+        // 0004 ran in test_pool already; replay its updates on rows written the old way.
+        let pool = test_pool().await;
+        let insert = |id: &'static str, km: f64, secs: i64, reason: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO jobs (id, source_city, source_company, dest_city, dest_company,
+                       cargo_id, cargo_name, cargo_mass_kg, declared_income, distance_km,
+                       duration_sec, avg_speed_kmh, started_at, completed_at, status, source,
+                       flagged, flag_reason)
+                     VALUES (?, 'A', 'a', 'B', 'b', 'c', 'C', 1, 1, ?, ?, 0,
+                       '2026-11-15T10:00:00Z', '2026-11-15T12:00:00Z', 'DELIVERED', 'TELEMETRY', 1, ?)",
+                )
+                .bind(id)
+                .bind(km)
+                .bind(secs)
+                .bind(reason)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        insert("long", 2455.2, 8797, "Average speed over 150 km/h").await;
+        insert(
+            "short",
+            0.5,
+            1,
+            "Distance under 1 km; Average speed over 150 km/h",
+        )
+        .await;
+        insert("teleport", 4000.0, 3600, "Average speed over 150 km/h").await;
+        insert("mine", 300.0, 3600, "looked odd").await;
+        let sql = include_str!("../../migrations/0004_game_time_speed.sql");
+        let updates: Vec<&str> = sql
+            // Statements end a line; the flag reasons have "; " inside them.
+            .split(";\n")
+            .filter(|q| q.trim_start().lines().any(|l| l.starts_with("UPDATE jobs")))
+            .collect();
+        assert_eq!(updates.len(), 2);
+        for q in updates {
+            sqlx::query(q).execute(&pool).await.unwrap();
+        }
+        let rows: Vec<(String, bool, Option<String>)> =
+            sqlx::query_as("SELECT id, flagged, flag_reason FROM jobs ORDER BY id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("long".into(), false, None),
+                ("mine".into(), true, Some("looked odd".into())),
+                ("short".into(), true, Some("Distance under 1 km".into())),
+                (
+                    "teleport".into(),
+                    true,
+                    Some("Average speed over 150 km/h".into())
+                ),
+            ]
+        );
     }
 }
