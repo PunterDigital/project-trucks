@@ -114,9 +114,15 @@ const test = base.extend<{ hub: StubHub }>({
 
 type Invoke = (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
-async function createJob(page: Page, destCity: string, notes: string | null = null): Promise<string> {
+/** A job as the telemetry runner records it (test profiles may seed those), or one logged by hand. */
+async function createJob(
+  page: Page,
+  destCity: string,
+  notes: string | null = null,
+  source: "TELEMETRY" | "MANUAL" = "TELEMETRY",
+): Promise<string> {
   return page.evaluate(
-    async ({ destCity, notes }) => {
+    async ({ destCity, notes, source }) => {
       const tauri = (window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } })
         .__TAURI_INTERNALS__;
       const completed = new Date(Date.UTC(2026, 10, 14, 12));
@@ -140,13 +146,13 @@ async function createJob(page: Page, destCity: string, notes: string | null = nu
           startedAt: new Date(completed.getTime() - 14_400_000).toISOString(),
           completedAt: completed.toISOString(),
           status: "DELIVERED",
-          source: "MANUAL",
+          source,
           notes,
         },
       })) as { id: string };
       return job.id;
     },
-    { destCity, notes },
+    { destCity, notes, source },
   );
 }
 
@@ -177,6 +183,8 @@ test("linking, then new jobs, edits and deletes sync; old jobs wait for Sync his
   hub,
 }) => {
   const old = await createJob(page, "Before linking");
+  // Logged by hand: never synced, not even by Sync history (#4751).
+  const oldManual = await createJob(page, "Typed in before", null, "MANUAL");
   await link(page, hub);
   const section = page.getByTestId("hub-settings");
 
@@ -191,9 +199,13 @@ test("linking, then new jobs, edits and deletes sync; old jobs wait for Sync his
   const sent = hub.jobs.get(fresh)!;
   expect(sent.dest_city).toBe("Paris");
   expect(sent.status).toBe("DELIVERED");
-  expect(sent.source).toBe("MANUAL");
+  expect(sent.source).toBe("TELEMETRY");
   expect(sent).not.toHaveProperty("notes");
   await expect(section.getByTestId("hub-sync-summary")).toContainText("1 job on the Hub");
+
+  // A job logged by hand after linking stays on this PC, edits included.
+  const manual = await createJob(page, "Typed in", null, "MANUAL");
+  await invoke(page, "update_job", { id: manual, patch: { flagged: true, flagReason: "odd" } });
 
   // An edit follows it.
   await invoke(page, "update_job", { id: fresh, patch: { flagged: true, flagReason: "odd" } });
@@ -204,6 +216,9 @@ test("linking, then new jobs, edits and deletes sync; old jobs wait for Sync his
   await expect.poll(() => hub.jobs.has(old), { timeout: 15_000 }).toBe(true);
   await expect(section.getByTestId("hub-sync-summary")).toContainText("2 jobs on the Hub");
   await expect(section.getByRole("button", { name: /Sync history/ })).toHaveCount(0);
+  expect(hub.jobs.has(manual)).toBe(false);
+  expect(hub.jobs.has(oldManual)).toBe(false);
+  expect(hub.jobs.size).toBe(2);
 
   // Deleting a synced job deletes it on the Hub.
   await invoke(page, "delete_job", { id: fresh });

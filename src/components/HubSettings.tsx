@@ -171,9 +171,10 @@ export function HubSettings() {
 
       <p className="text-sm text-muted-foreground">
         Share your jobs on the ProjectTrucks Hub: your profile, a company and the leaderboards.
-        Nothing leaves this PC until you link an account. Once linked, new jobs sync by
-        themselves and show on your public profile, along with what you&apos;re driving right
-        now; older jobs only sync if you click Sync history. Job notes always stay on this PC.
+        Nothing leaves this PC until you link an account. Once linked, new recorded jobs sync
+        by themselves and show on your public profile, along with what you&apos;re driving right
+        now; older jobs only sync if you click Sync history. Jobs you log by hand and job notes
+        always stay on this PC.
         You can hide jobs or make your profile private on the website.
       </p>
     </section>

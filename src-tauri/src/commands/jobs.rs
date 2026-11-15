@@ -287,7 +287,13 @@ pub async fn remove_job(pool: &SqlitePool, id: &str) -> Result<()> {
 // --- Tauri command wrappers ---
 
 #[tauri::command]
-pub async fn create_job(state: State<'_, AppState>, input: NewJob) -> Result<Job, String> {
+pub async fn create_job(state: State<'_, AppState>, mut input: NewJob) -> Result<Job, String> {
+    // This command is the Add job form: whatever it sends, a job typed in by hand is MANUAL, so
+    // it never counts as recorded or reaches the Hub (#4751). Recorded jobs are inserted by the
+    // telemetry runner, not through here. Test profiles may seed recorded jobs.
+    if crate::db::data_dir_override().is_none() {
+        input.source = JobSource::Manual;
+    }
     insert_job(&state.pool, input)
         .await
         .map_err(|e| e.to_string())
