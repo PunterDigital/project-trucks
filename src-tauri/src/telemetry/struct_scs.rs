@@ -434,3 +434,128 @@ pub(crate) mod tests {
         );
     }
 }
+
+/// A whole delivery recorded from the real game (Nov 15, Shay's Málaga → Algeciras external-market
+/// job, scs-telemetry V.1.12.1): pickup to drop-off, results screen and 90 s after.
+#[cfg(test)]
+mod recorded {
+    use super::*;
+    use crate::telemetry::replay::{Replay, ReplaySample};
+    use crate::telemetry::state_machine::{Config, Event, StateMachine};
+
+    /// Opt-in converter, never run in CI. Reads a recording made with the control repo's
+    /// read-only recorder (records of `[i64 unix ms][7560 bytes scs-telemetry][2048 bytes funbit]`,
+    /// one per second) and writes a replay fixture: one sample every 5 s, plus every sample within
+    /// 10 s of a change in pause or job state, so the fixture stays small but keeps every edge.
+    /// `PROJECTTRUCKS_SCS_RECORDING=<in> PROJECTTRUCKS_SCS_REPLAY_OUT=<out> cargo test --lib recording_to_replay`
+    #[test]
+    fn recording_to_replay() {
+        let (Some(input), Some(output)) = (
+            std::env::var_os("PROJECTTRUCKS_SCS_RECORDING"),
+            std::env::var_os("PROJECTTRUCKS_SCS_REPLAY_OUT"),
+        ) else {
+            eprintln!("skipped: set PROJECTTRUCKS_SCS_RECORDING and PROJECTTRUCKS_SCS_REPLAY_OUT");
+            return;
+        };
+        const RECORD: usize = 8 + FRAME_SIZE + 2048;
+        let bytes = std::fs::read(input).unwrap();
+        let mut frames = Vec::new();
+        for rec in bytes.chunks_exact(RECORD) {
+            let ms = i64::from_le_bytes(rec[..8].try_into().unwrap());
+            let snap = ScsFrame::from_bytes(&rec[8..8 + FRAME_SIZE])
+                .ok()
+                .map(|f| f.to_snapshot());
+            frames.push((ms, snap));
+        }
+        let key = |s: &Option<TelemetrySnapshot>| {
+            s.as_ref()
+                .map(|s| (s.paused, s.job.is_some(), s.truck.trailer_attached))
+        };
+        let edges: Vec<usize> = (1..frames.len())
+            .filter(|&i| key(&frames[i].1) != key(&frames[i - 1].1))
+            .collect();
+        let first_ms = frames[0].0;
+        let samples: Vec<ReplaySample> = frames
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                i % 5 == 0 || *i == frames.len() - 1 || edges.iter().any(|&e| i.abs_diff(e) <= 10)
+            })
+            .map(|(_, (ms, snap))| ReplaySample {
+                t: (ms - first_ms) as f64 / 1000.0,
+                snapshot: snap.clone(),
+            })
+            .collect();
+        eprintln!(
+            "{} records -> {} samples, edges at {edges:?}",
+            frames.len(),
+            samples.len()
+        );
+        std::fs::write(output, serde_json::to_string(&Replay { samples }).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn the_recorded_delivery_is_one_completed_job() {
+        let replay: Replay =
+            serde_json::from_str(include_str!("testdata/scs-recorded-delivery.json")).unwrap();
+        let start = chrono::NaiveDate::from_ymd_opt(2026, 11, 15)
+            .unwrap()
+            .and_hms_opt(10, 53, 45)
+            .unwrap();
+        let mut machine = StateMachine::new(Config::default());
+        let mut events = Vec::new();
+        for s in &replay.samples {
+            let at = start + chrono::Duration::milliseconds((s.t * 1000.0) as i64);
+            events.extend(machine.step(at, s.snapshot.as_ref()));
+        }
+        // The recording shows the game pause on the results screen, the job clear 3 s later (still
+        // paused, 0.11 km from the drop-off) and the trailer unhitch, and it ends while the results
+        // screen is still up. Paused frames change nothing, so nothing is recorded yet...
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::JobCompleted { .. })),
+            "{events:#?}"
+        );
+        // ...until the player leaves the results screen: the last frame, unpaused (synthetic).
+        let last = replay.samples.last().unwrap();
+        let mut resumed = last.snapshot.clone().expect("last frame");
+        assert!(resumed.paused && resumed.job.is_none());
+        resumed.paused = false;
+        let at = start + chrono::Duration::milliseconds(((last.t + 1.0) * 1000.0) as i64);
+        events.extend(machine.step(at, Some(&resumed)));
+        let started: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, Event::JobStarted { .. }))
+            .collect();
+        assert_eq!(started.len(), 1, "{events:#?}");
+        let completed: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::JobCompleted {
+                    job,
+                    end_odometer_km,
+                    ..
+                } => Some((job, *end_odometer_km)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(completed.len(), 1, "{events:#?}");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, Event::JobCancelled { .. })),
+            "{events:#?}"
+        );
+        let (job, end_km) = completed[0];
+        assert_eq!(job.job.destination_city.as_deref(), Some("Algeciras"));
+        assert_eq!(job.job.income, 4478);
+        assert_eq!(job.job.deadline, None);
+        assert_eq!(job.truck_model.as_deref(), Some("FH4"));
+        // Odometer 518,612.84 at the first frame, 518,736.66 at the drop-off.
+        let driven = end_km - job.start_odometer_km;
+        assert!((driven - 123.8).abs() < 0.2, "driven {driven} km");
+        // After the delivery the machine is not still on that job.
+        assert_eq!(machine.active_job(), None);
+    }
+}

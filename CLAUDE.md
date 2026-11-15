@@ -141,7 +141,15 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   (`PROJECTTRUCKS_LIVE_TELEMETRY=1` or `=funbit` on the `live_game` test, `PROJECTTRUCKS_LIVE_TELEMETRY_DUMP=<file>`
   saves the raw frame): every shared field matched except the truck names (Funbit said make id `scs`, model `STD`;
   RenCloud says `volvo` / `FH4`, so jobs recorded before and after the switch show as two trucks) and the deadline.
-  Fixtures: `testdata/scs-rev12-free-roam-frame.bin`, `scs-rev12-job-frame.bin`.
+  Fixtures: `testdata/scs-rev12-free-roam-frame.bin`, `scs-rev12-job-frame.bin`, and a whole recorded delivery
+  (`scs-recorded-delivery.json`, a replay fixture: 662 frames at 1 Hz thinned to 163 samples that keep every
+  pause/job/trailer edge; `struct_scs::recorded`). In that delivery the game paused on the results screen, `onJob`
+  cleared 3 s later while still paused (0.11 km left), then autopark unhitched the trailer; the state machine records
+  the delivery on the first unpaused frame after the results screen. At delivery the plugin also fills revenue, XP,
+  job distance, cargo damage and autopark/autoload (`gameplay_*` zones), and tolls/fines/ferries arrive as toggles
+  with amounts. The recording was made with a throwaway read-only PowerShell recorder (`MemoryMappedFile.OpenExisting`
+  with Read rights, one `[i64 ms][7560 B scs][2048 B funbit]` record per second); `recording_to_replay` (opt-in
+  test) turns such a file into a replay fixture.
 - No-deadline jobs: an external-market job has delivery time `u32::MAX`. Funbit passes it on as -1, which read as a
   date before the game's clock, so every such delivery was recorded **Late**. Both decoders now read it as no
   deadline (`deadline: None`, never late).
