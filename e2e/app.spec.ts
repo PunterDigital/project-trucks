@@ -17,6 +17,7 @@ test("log a job, see it in history and the fleet, then delete it", async ({ page
   await page.getByRole("link", { name: "Log your first job manually" }).click();
 
   await expect(page.getByRole("heading", { name: "Log a job" })).toBeVisible();
+  await expect(page.getByTestId("manual-stays-local")).toContainText("never sync to the ProjectTrucks Hub");
   await page.getByLabel("Source city").fill("Calais");
   await page.getByLabel("Source company").fill("Tradeaux");
   await page.getByLabel("Destination city").fill("Rotterdam");

@@ -99,6 +99,9 @@ export function JobNew() {
         <p className="text-muted-foreground">
           Manual entry for deliveries the telemetry missed.
         </p>
+        <p className="text-sm text-muted-foreground" data-testid="manual-stays-local">
+          Jobs you log by hand stay on this PC: they never sync to the ProjectTrucks Hub.
+        </p>
       </div>
 
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">

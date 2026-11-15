@@ -18,7 +18,8 @@ pub struct Counts {
     pub failed: i64,
     /// On the Hub.
     pub synced: i64,
-    /// Local jobs neither on the Hub nor queued (from before linking): "Sync history".
+    /// Recorded jobs neither on the Hub nor queued (from before linking): "Sync history".
+    /// Manual jobs never sync (#4751), so they never count here.
     pub history: i64,
 }
 
@@ -29,7 +30,8 @@ pub async fn counts(pool: &SqlitePool) -> Result<Counts, sqlx::Error> {
            (SELECT COUNT(*) FROM hub_outbox WHERE attempts >= ?1),
            (SELECT COUNT(*) FROM hub_jobs),
            (SELECT COUNT(*) FROM jobs
-              WHERE id NOT IN (SELECT job_id FROM hub_jobs)
+              WHERE source <> 'MANUAL'
+                AND id NOT IN (SELECT job_id FROM hub_jobs)
                 AND id NOT IN (SELECT job_id FROM hub_outbox))",
     )
     .bind(MAX_ATTEMPTS)
@@ -153,11 +155,13 @@ pub async fn first_failure(pool: &SqlitePool) -> Result<Option<String>, sqlx::Er
     Ok(row.and_then(|r| r.0))
 }
 
-/// "Sync history": queue every job the Hub doesn't have yet. Returns how many were queued.
+/// "Sync history": queue every recorded job the Hub doesn't have yet (manual jobs stay on this
+/// PC). Returns how many were queued.
 pub async fn queue_history(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
     let done = sqlx::query(
         "INSERT OR IGNORE INTO hub_outbox (job_id, op)
-         SELECT id, 'upsert' FROM jobs WHERE id NOT IN (SELECT job_id FROM hub_jobs)",
+         SELECT id, 'upsert' FROM jobs
+         WHERE source <> 'MANUAL' AND id NOT IN (SELECT job_id FROM hub_jobs)",
     )
     .execute(pool)
     .await?;
@@ -233,8 +237,16 @@ mod tests {
             started_at: Utc.with_ymd_and_hms(2026, 11, 14, 10, 0, 0).unwrap(),
             completed_at: Utc.with_ymd_and_hms(2026, 11, 14, 14, 0, 0).unwrap(),
             status: JobStatus::Delivered,
-            source: JobSource::Manual,
+            source: JobSource::Telemetry,
             notes: None,
+        }
+    }
+
+    fn manual_job() -> NewJob {
+        NewJob {
+            source: JobSource::Manual,
+            dest_city: "Lyon".into(),
+            ..new_job()
         }
     }
 
@@ -301,6 +313,73 @@ mod tests {
         let job = insert_job(&pool, new_job()).await.unwrap();
         remove_job(&pool, &job.id).await.unwrap();
         assert!(queued(&pool).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn manual_jobs_never_sync() {
+        let pool = pool().await;
+        let old = insert_job(&pool, manual_job()).await.unwrap();
+        assert_eq!(counts(&pool).await.unwrap().history, 0);
+        set_linked(&pool, true).await;
+
+        let fresh = insert_job(&pool, manual_job()).await.unwrap();
+        assert!(queued(&pool).await.is_empty());
+        let flag = JobPatch {
+            notes: None,
+            flagged: Some(true),
+            flag_reason: None,
+        };
+        patch_job(&pool, &fresh.id, flag).await.unwrap();
+        assert!(queued(&pool).await.is_empty());
+
+        assert_eq!(queue_history(&pool).await.unwrap(), 0);
+        assert!(queued(&pool).await.is_empty());
+        assert_eq!(counts(&pool).await.unwrap().history, 0);
+        remove_job(&pool, &old.id).await.unwrap();
+        assert!(queued(&pool).await.is_empty());
+    }
+
+    /// Migration 0003 on a database that synced manual jobs under 0002.
+    #[tokio::test]
+    async fn the_migration_takes_manual_jobs_back_off_the_hub() {
+        let pool = pool().await;
+        set_linked(&pool, true).await;
+        let recorded = insert_job(&pool, new_job()).await.unwrap();
+        let on_hub = insert_job(&pool, manual_job()).await.unwrap();
+        let waiting = insert_job(&pool, manual_job()).await.unwrap();
+        sqlx::query(
+            "INSERT INTO hub_jobs (job_id, synced_at) VALUES (?, 'x'), (?, 'x');
+             INSERT INTO hub_outbox (job_id, op) VALUES (?, 'upsert');",
+        )
+        .bind(&recorded.id)
+        .bind(&on_hub.id)
+        .bind(&waiting.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DELETE FROM hub_outbox WHERE job_id = ?")
+            .bind(&recorded.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        sqlx::raw_sql(include_str!("../../migrations/0003_hub_skip_manual.sql"))
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            queued(&pool).await,
+            vec![(on_hub.id.clone(), "delete".into())]
+        );
+        assert_eq!(counts(&pool).await.unwrap().synced, 2);
+        let deletes = next_deletes(&pool, 100).await.unwrap();
+        mark_deleted(&pool, &deletes[0]).await.unwrap();
+        let synced: Vec<(String,)> = sqlx::query_as("SELECT job_id FROM hub_jobs")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(synced, vec![(recorded.id.clone(),)]);
     }
 
     #[tokio::test]
