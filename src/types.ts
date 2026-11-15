@@ -303,6 +303,24 @@ export interface HubAccount {
   name: string;
   username: string | null;
   profileUrl: string;
+  /** From the Hub's `GET /me`; null when not in a company (or not fetched yet). */
+  company?: HubCompany | null;
+}
+
+export interface HubCompany {
+  name: string;
+  tag: string | null;
+}
+
+/** Mirrors `hub::outbox::JobHubState` (#4654). */
+export interface JobHubState {
+  jobId: string;
+  state: "synced" | "pending" | "refused" | "local" | "notSynced";
+  /** The job's page on the Hub, once synced. */
+  url: string | null;
+  hidden: boolean;
+  /** Why the Hub refused it. */
+  error: string | null;
 }
 
 /** A link in progress: the code the driver approves on the website. */

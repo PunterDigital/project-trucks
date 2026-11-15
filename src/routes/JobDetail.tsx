@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ArrowLeft, FileQuestion, Loader2 } from "lucide-react";
 
 import { EmptyState } from "@/components/EmptyState";
+import { JobHubPanel } from "@/components/HubSync";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
 import { LoadError } from "@/components/LoadError";
 import { JobDetailSkeleton } from "@/components/Skeletons";
@@ -26,6 +27,7 @@ import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 
 import { api } from "@/lib/api";
+import { useHubStatus } from "@/lib/hub";
 import {
   formatCurrency,
   formatDate,
@@ -308,6 +310,8 @@ export function JobDetail() {
 
       <Separator />
 
+      <JobHubSection jobId={job.id} />
+
       {/* Review (editable) */}
       <Section
         title="Review"
@@ -420,4 +424,18 @@ function SaveIndicator({ status }: { status: Status }) {
   if (status === "saved")
     return <span className="text-xs text-emerald-600 dark:text-emerald-400">Saved</span>;
   return <span className="text-destructive text-xs">Save failed</span>;
+}
+
+/** "ProjectTrucks Hub" on the job page, only while linked (#4654). */
+function JobHubSection({ jobId }: { jobId: string }) {
+  const status = useHubStatus();
+  if (!status?.linked) return null;
+  return (
+    <>
+      <Section title="ProjectTrucks Hub">
+        <JobHubPanel jobId={jobId} />
+      </Section>
+      <Separator />
+    </>
+  );
 }

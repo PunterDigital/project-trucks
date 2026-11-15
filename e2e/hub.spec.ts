@@ -19,6 +19,9 @@ class StubHub {
   tokenRevokedByApp = false;
   jobs = new Map<string, Record<string, unknown>>();
   deletes: string[] = [];
+  /** Jobs the driver hid on the Hub (#4654). */
+  hidden = new Set<string>();
+  company: { name: string; slug: string; tag: string } | null = null;
   statuses: (Record<string, unknown> | "deleted")[] = [];
   private server: Server | null = null;
 
@@ -64,7 +67,31 @@ class StubHub {
         for (const job of jobs) this.jobs.set(String(job.id), job);
         return send(200, {
           synced: jobs.length,
-          jobs: jobs.map((j) => ({ id: j.id, url: `${this.url}/jobs/${j.id}` })),
+          jobs: jobs.map((j) => ({
+            id: j.id,
+            url: `${this.url}/jobs/${j.id}`,
+            hidden: this.hidden.has(String(j.id)),
+          })),
+        });
+      }
+      if (req.method === "PATCH" && path.startsWith("/api/v1/jobs/")) {
+        const id = decodeURIComponent(path.slice("/api/v1/jobs/".length));
+        if (!this.jobs.has(id)) return send(404, { message: "Not found" });
+        if (typeof body.hidden !== "boolean") return send(422, { message: "hidden" });
+        if (body.hidden) this.hidden.add(id);
+        else this.hidden.delete(id);
+        return send(200, { id, url: `${this.url}/jobs/${id}`, hidden: body.hidden });
+      }
+      if (req.method === "GET" && path === "/api/v1/me") {
+        return send(200, {
+          id: 1,
+          name: "Erin Example",
+          username: "erin",
+          avatar: null,
+          company: this.company,
+          profile_url: `${this.url}/drivers/erin`,
+          profile_private: false,
+          jobs_synced: this.jobs.size,
         });
       }
       if (req.method === "DELETE" && path.startsWith("/api/v1/jobs/")) {
@@ -341,9 +368,87 @@ test.describe("live status", () => {
     expect(position.z).toBe(-2500);
     expect(position.heading_deg).toBe(90);
 
-
     // Switching auto-capture off ends the drive: the Hub is told.
     await page.getByLabel("Record drives and deliveries from ETS2 automatically").click();
     await expect.poll(() => hub.statuses.at(-1), { timeout: 15_000 }).toBe("deleted");
   });
+});
+
+test("the app shows what reached the Hub: header pill, company, job badges and Hide on Hub (#4654)", async ({
+  page,
+  hub,
+}) => {
+  hub.company = { name: "Chart Haulage", slug: "chart", tag: "CHT" };
+  // No pill before linking.
+  await expect(page.getByTestId("auto-capture-pill")).toBeVisible();
+  await expect(page.getByTestId("hub-pill")).toHaveCount(0);
+
+  const old = await createJob(page, "Before linking");
+  await link(page, hub);
+  const section = page.getByTestId("hub-settings");
+  await expect(section.getByTestId("hub-company")).toHaveText("Company: Chart Haulage [CHT]", {
+    timeout: 15_000,
+  });
+  await expect(page.getByTestId("hub-pill-label")).toHaveText("@erin");
+
+  const fresh = await createJob(page, "Paris");
+  const manual = await createJob(page, "Typed in", null, "MANUAL");
+  await expect.poll(() => hub.jobs.has(fresh), { timeout: 15_000 }).toBe(true);
+
+  // Jobs list: only the synced job carries a Hub badge.
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  const row = (city: string) => page.getByRole("row").filter({ hasText: city });
+  await expect(row("Paris").getByTestId("hub-sync-badge")).toHaveAttribute("data-state", "synced", {
+    timeout: 15_000,
+  });
+  await expect(row("Typed in").getByTestId("hub-sync-badge")).toHaveCount(0);
+  await expect(row("Before linking").getByTestId("hub-sync-badge")).toHaveCount(0);
+
+  // Job page: state, link and the Hide on Hub switch, which reaches the Hub.
+  await row("Paris").click();
+  const panel = page.getByTestId("job-hub-panel");
+  await expect(panel.getByTestId("job-hub-state")).toHaveText("On the Hub.");
+  await expect(panel.getByRole("button", { name: "Open on the Hub" })).toBeVisible();
+  const hide = panel.getByRole("checkbox", { name: "Hide on Hub" });
+  await expect(hide).not.toBeChecked();
+  await hide.click();
+  await expect(hide).toBeChecked();
+  expect(hub.hidden.has(fresh)).toBe(true);
+  await expect(panel.getByTestId("job-hub-state")).toHaveText("On the Hub (hidden).");
+
+  // An edit re-syncs it; the Hub's "hidden" comes back and the job stays hidden.
+  await invoke(page, "update_job", { id: fresh, patch: { flagged: true, flagReason: "odd" } });
+  await expect.poll(() => hub.jobs.get(fresh)?.flagged, { timeout: 15_000 }).toBe(true);
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  await expect(row("Paris").getByTestId("hub-sync-badge")).toHaveText("Hub ✓ hidden", {
+    timeout: 15_000,
+  });
+
+  // Showing it again.
+  await row("Paris").click();
+  await panel.getByRole("checkbox", { name: "Hide on Hub" }).click();
+  await expect(panel.getByRole("checkbox", { name: "Hide on Hub" })).not.toBeChecked();
+  expect(hub.hidden.has(fresh)).toBe(false);
+
+  // Jobs that never go to the Hub say why, without a switch.
+  await page.goto(page.url().replace(fresh, manual));
+  await expect(panel.getByTestId("job-hub-state")).toHaveText(
+    "Logged by hand, so it stays on this PC.",
+  );
+  await expect(panel.getByRole("checkbox")).toHaveCount(0);
+  await page.goto(page.url().replace(manual, old));
+  await expect(panel.getByTestId("job-hub-state")).toContainText(
+    "recorded before this app was linked",
+  );
+
+  // Offline: the pill says so; it opens Settings → Hub.
+  hub.revoked = false;
+  await hub.stop();
+  await createJob(page, "While offline");
+  await expect(page.getByTestId("hub-pill")).toHaveAttribute("data-state", "offline", {
+    timeout: 20_000,
+  });
+  await page.getByTestId("hub-pill").click();
+  await expect(page).toHaveURL(/\/settings#hub$/);
+  await expect(page.getByTestId("hub-settings")).toBeInViewport();
 });

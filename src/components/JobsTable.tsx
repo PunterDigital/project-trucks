@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { HubSyncBadge } from "@/components/HubSync";
 import { JobStatusBadge } from "@/components/JobStatusBadge";
 import {
   Table,
@@ -11,6 +12,7 @@ import {
 } from "@/components/ui/table";
 
 import { formatCurrency, formatDate, formatDuration, formatKm } from "@/lib/format";
+import { useJobHubStates } from "@/lib/hub";
 import type { Job } from "@/types";
 
 /** The jobs list shared by the Jobs page and the truck page. Rows open the job. */
@@ -23,6 +25,7 @@ export function JobsTable({
   jobs: Job[];
   onOpen: (id: string) => void;
 } & React.ComponentProps<"div">) {
+  const hubStates = useJobHubStates(jobs.map((j) => j.id));
   return (
     <div className={className ?? "overflow-hidden rounded-md border"} {...props}>
       <Table>
@@ -73,6 +76,7 @@ export function JobsTable({
                       Flagged
                     </Badge>
                   )}
+                  <HubSyncBadge state={hubStates.get(job.id)} />
                 </div>
               </TableCell>
               <TableCell className="whitespace-nowrap text-right">

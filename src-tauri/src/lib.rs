@@ -57,6 +57,8 @@ pub fn run() {
             hub::hub_sync_history,
             hub::hub_sync_now,
             hub::hub_open,
+            hub::hub_job_states,
+            hub::hub_set_hidden,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
