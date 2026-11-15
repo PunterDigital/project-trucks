@@ -353,6 +353,31 @@ pub(crate) mod tests {
         assert_eq!(snap.job, None);
     }
 
+    /// A frame captured from the real game (Nov 15, plugin V.1.12.1, free roam with a
+    /// trailer hitched and no job). Funbit's plugin, loaded alongside, read the same odometer,
+    /// position, fuel, wear and trailer state at the same moment.
+    #[test]
+    fn decodes_a_real_free_roam_frame() {
+        let bytes = include_bytes!("testdata/scs-rev12-free-roam-frame.bin");
+        let snap = ScsFrame::from_bytes(bytes).unwrap().to_snapshot();
+        assert_eq!(snap.plugin_revision, 12);
+        assert!(!snap.paused);
+        assert_eq!(snap.truck.make.as_deref(), Some("Volvo"));
+        assert_eq!(snap.truck.make_id.as_deref(), Some("volvo"));
+        assert_eq!(snap.truck.model.as_deref(), Some("FH4"));
+        assert!((snap.truck.odometer_km - 518_507.47).abs() < 0.01);
+        assert!(snap.truck.engine_enabled);
+        assert!(snap.truck.trailer_attached);
+        assert_eq!(snap.truck.fuel_capacity_litres, 800.0);
+        assert!((snap.truck.fuel_litres - 552.4).abs() < 1.0);
+        assert!((snap.truck.position.0 - -71_704.69).abs() < 0.01);
+        assert!((snap.truck.position.2 - 68_086.25).abs() < 0.01);
+        assert!((snap.truck.heading - 0.7113).abs() < 1e-3);
+        assert!(snap.truck.speed_kmh.abs() < 0.01);
+        assert!(snap.game_time.is_some());
+        assert_eq!(snap.job, None);
+    }
+
     #[test]
     fn rejects_inactive_short_and_unknown_frames() {
         assert_eq!(

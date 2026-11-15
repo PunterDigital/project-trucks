@@ -466,7 +466,14 @@ mod tests {
             eprintln!("skipped: set PROJECTTRUCKS_LIVE_TELEMETRY=1 with ETS2 running");
             return;
         }
-        let reader = TelemetryReader::open().expect("connect to the live plugin");
+        // PROJECTTRUCKS_LIVE_TELEMETRY=funbit reads the old plugin's mapping instead (both can be
+        // loaded at once, which is how the two decoders were compared against each other).
+        let reader = if std::env::var("PROJECTTRUCKS_LIVE_TELEMETRY").as_deref() == Ok("funbit") {
+            TelemetryReader::open_named(Plugin::Funbit.mapping_name(), Plugin::Funbit, OPEN_TIMEOUT)
+        } else {
+            TelemetryReader::open()
+        }
+        .expect("connect to the live plugin");
         eprintln!("plugin: {:?}", reader.plugin());
         if let Some(path) = std::env::var_os("PROJECTTRUCKS_LIVE_TELEMETRY_DUMP") {
             std::fs::write(&path, reader.read_raw()).expect("write the frame dump");
