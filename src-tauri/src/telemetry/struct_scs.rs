@@ -460,7 +460,7 @@ mod recorded {
         const RECORD: usize = 8 + FRAME_SIZE + 2048;
         let bytes = std::fs::read(input).unwrap();
         let mut frames = Vec::new();
-        for rec in bytes.chunks_exact(RECORD) {
+        for rec in bytes.as_chunks::<RECORD>().0 {
             let ms = i64::from_le_bytes(rec[..8].try_into().unwrap());
             let snap = ScsFrame::from_bytes(&rec[8..8 + FRAME_SIZE])
                 .ok()
