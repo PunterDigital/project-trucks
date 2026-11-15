@@ -301,7 +301,9 @@ impl TelemetryFrame {
             },
             job: has_job.then(|| JobSnapshot {
                 income: r2.job_income,
-                deadline: if r2.time_abs_delivery != 0 {
+                // 0 = no job; -1 (the game's u32::MAX) = no deadline, e.g. an external-market
+                // job. Read as a date, -1 is before the clock starts and every delivery was "late".
+                deadline: if r2.time_abs_delivery > 0 {
                     game_minutes(r2.time_abs_delivery)
                 } else {
                     None
@@ -625,5 +627,16 @@ mod tests {
         assert_eq!(positive(f32::NAN), 0.0);
         assert_eq!(positive(-3.0), 0.0);
         assert_eq!(positive(12.5), 12.5);
+    }
+
+    /// External-market jobs have no deadline; the plugin passes the game's u32::MAX on as -1.
+    #[test]
+    fn a_job_without_a_deadline_has_none() {
+        let bytes = include_bytes!("testdata/plugin-rev9-frame.bin");
+        let mut frame = TelemetryFrame::from_bytes(bytes).unwrap();
+        frame.rev2.time_abs_delivery = -1;
+        frame.rev2.city_dst[..8].copy_from_slice(b"Algecira");
+        let job = frame.to_snapshot().job.expect("still a job");
+        assert_eq!(job.deadline, None);
     }
 }

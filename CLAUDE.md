@@ -137,7 +137,14 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   there. The DLL has no version resource, so a different `scs-telemetry.dll` is replaced (kept as `.bak`), not
   compared. Other trackers' DLLs (Shay has `ETSSharedMemoryMapPlugin64v2.dll`) are never touched. The state machine
   still uses only the frame's job/pause/route fields; RenCloud's gameplay events (`jobDelivered`/`jobCancelled`
-  toggles, revenue, penalty) are not read yet.
+  toggles, revenue, penalty) are not read yet. Checked against the real game on Nov 15 with both plugins loaded at once
+  (`PROJECTTRUCKS_LIVE_TELEMETRY=1` or `=funbit` on the `live_game` test, `PROJECTTRUCKS_LIVE_TELEMETRY_DUMP=<file>`
+  saves the raw frame): every shared field matched except the truck names (Funbit said make id `scs`, model `STD`;
+  RenCloud says `volvo` / `FH4`, so jobs recorded before and after the switch show as two trucks) and the deadline.
+  Fixtures: `testdata/scs-rev12-free-roam-frame.bin`, `scs-rev12-job-frame.bin`.
+- No-deadline jobs: an external-market job has delivery time `u32::MAX`. Funbit passes it on as -1, which read as a
+  date before the game's clock, so every such delivery was recorded **Late**. Both decoders now read it as no
+  deadline (`deadline: None`, never late).
 - E2E teardown can flake on Windows: `rmSync` of the data dir fails while WebView2 still holds a file. A rerun passes.
 - Recorded (telemetry) jobs are sanity-checked in `insert_job_row` (`sanity_flag` in `commands/jobs.rs`): average speed over
   150 km/h or distance under 1 km sets `flagged` + `flag_reason`; manual entries are never auto-flagged. The Jobs list and

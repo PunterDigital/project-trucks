@@ -186,7 +186,8 @@ impl<'a> ScsFrame<'a> {
             },
             job: on_job.then(|| JobSnapshot {
                 income: i32::try_from(self.u64(off::JOB_INCOME)).unwrap_or(i32::MAX),
-                deadline: if deadline != 0 {
+                // 0 = none set; u32::MAX = the job has no deadline (external-market jobs).
+                deadline: if deadline != 0 && deadline != u32::MAX {
                     game_minutes(deadline)
                 } else {
                     None
@@ -376,6 +377,40 @@ pub(crate) mod tests {
         assert!(snap.truck.speed_kmh.abs() < 0.01);
         assert!(snap.game_time.is_some());
         assert_eq!(snap.job, None);
+    }
+
+    /// A frame captured on a real job (Nov 15: an external-market job, Málaga → Algeciras, on the
+    /// way to the pickup). Funbit's plugin read the same job at the same moment; the only field that
+    /// differed is the deadline, which the game sends as u32::MAX for "no deadline".
+    #[test]
+    fn decodes_a_real_job_frame() {
+        let bytes = include_bytes!("testdata/scs-rev12-job-frame.bin");
+        let snap = ScsFrame::from_bytes(bytes).unwrap().to_snapshot();
+        assert!(snap.truck.trailer_attached);
+        assert!((snap.truck.speed_kmh - 41.9).abs() < 0.1);
+        let job = snap.job.expect("on a job");
+        assert_eq!(job.income, 4478);
+        assert_eq!(job.deadline, None);
+        assert_eq!(job.source_city.as_deref(), Some("Málaga"));
+        assert_eq!(job.destination_city.as_deref(), Some("Algeciras"));
+        assert_eq!(job.source_company.as_deref(), Some("FLE"));
+        assert_eq!(
+            job.destination_company.as_deref(),
+            Some("Transportes Caballería")
+        );
+        assert_eq!(job.cargo_id.as_deref(), Some("comp_process"));
+        assert_eq!(job.cargo_name.as_deref(), Some("Computer Processors"));
+        assert!((job.cargo_mass_kg - 3854.4).abs() < 0.01);
+        assert!((job.route_distance_km - 101.74).abs() < 0.01);
+        assert!((job.route_time_minutes - 83.37).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_job_with_a_deadline_keeps_it() {
+        let mut b = Builder::active();
+        b.put(off::ON_JOB, &[1]).u32(off::TIME_ABS_DELIVERY, 60_000);
+        let snap = ScsFrame::from_bytes(&b.0).unwrap().to_snapshot();
+        assert_eq!(snap.job.unwrap().deadline, game_minutes(60_000));
     }
 
     #[test]
