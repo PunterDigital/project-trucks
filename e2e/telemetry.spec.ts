@@ -314,6 +314,7 @@ test.describe("first-launch plugin prompt", () => {
       await page.reload({ waitUntil: "load" });
       await page.getByRole("link", { name: "Jobs", exact: true }).click();
       await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+      // A check that nothing happens: the prompt must not come back after its status loads.
       await page.waitForTimeout(500);
       await expect(prompt).toBeHidden();
       expect(readFileSync(dllIn(game), "utf8")).toBe("some other plugin");

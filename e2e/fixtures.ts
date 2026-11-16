@@ -143,7 +143,14 @@ export const test = base.extend<Fixtures>({
   dataDir: async ({}, use) => {
     const dir = mkdtempSync(path.join(tmpdir(), "projecttrucks-e2e-"));
     await use(dir);
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    } catch (error) {
+      // WebView2's helper processes can hold a file for a few more seconds on Windows, more
+      // often with parallel workers (#4675). Cleanup isn't what the test checks:
+      // e2e/global-teardown.ts removes this run's leftovers once every app has exited.
+      console.warn(`Couldn't remove ${dir} yet: ${(error as Error).message}`);
+    }
   },
 
   page: async ({ dataDir, replay, appEnv }, use, testInfo) => {

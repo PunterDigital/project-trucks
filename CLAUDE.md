@@ -51,6 +51,12 @@ Isolation: every test sets `PROJECTTRUCKS_DATA_DIR` (see `src-tauri/src/db/mod.r
 SQLite database and the WebView2 profile (`<dir>/webview`). Never run E2E without it: the default
 data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
 
+Parallel (#4675): `fullyParallel`, 3 workers in CI, 2 locally (`PT_E2E_WORKERS=<n>` overrides). Nothing may be
+shared between tests: the CDP port is `9300 + workerIndex` (specs that relaunch the app use the same), the Hub and
+update mocks listen on port 0, fake game folders come from `mkdtemp`. A new spec with a fixed port or a fixed temp
+path breaks this. The remaining `waitForTimeout`s are "nothing happens" checks (no sync after unlink, no link after
+cancel, capture stays off/waiting, a dismissed prompt stays away); everything else waits on what the page shows.
+
 ## CI / release
 
 - `ci.yml`: ubuntu frontend typecheck/lint/unit tests/build; windows fmt/clippy/test, installers, E2E against the release
@@ -153,7 +159,9 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
 - No-deadline jobs: an external-market job has delivery time `u32::MAX`. Funbit passes it on as -1, which read as a
   date before the game's clock, so every such delivery was recorded **Late**. Both decoders now read it as no
   deadline (`deadline: None`, never late).
-- E2E teardown can flake on Windows: `rmSync` of the data dir fails while WebView2 still holds a file. A rerun passes.
+- E2E teardown on Windows: `rmSync` of the data dir can fail (EPERM) while WebView2 still holds a file, more often
+  with parallel workers. Since #4675 the `dataDir` fixture only warns, and `e2e/global-teardown.ts` removes this run's
+  leftover `projecttrucks-e2e-*` folders (made after `global-setup.ts` noted the start) once every app has exited.
 - Recorded (telemetry) jobs are sanity-checked in `insert_job_row` (`sanity_flag` in `commands/jobs.rs`): average speed over
   150 km/h or distance under 1 km sets `flagged` + `flag_reason`; manual entries are never auto-flagged.
   Speed is per **in-game** hour (#4771): ETS2's odometer counts game km, ~19 per real km on roads (Shay's recorded
