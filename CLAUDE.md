@@ -51,6 +51,12 @@ Isolation: every test sets `PROJECTTRUCKS_DATA_DIR` (see `src-tauri/src/db/mod.r
 SQLite database and the WebView2 profile (`<dir>/webview`). Never run E2E without it: the default
 data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
 
+Parallel (#4675): `fullyParallel`, 3 workers in CI, 2 locally (`PT_E2E_WORKERS=<n>` overrides). Nothing may be
+shared between tests: the CDP port is `9300 + workerIndex` (specs that relaunch the app use the same), the Hub and
+update mocks listen on port 0, fake game folders come from `mkdtemp`. A new spec with a fixed port or a fixed temp
+path breaks this. The remaining `waitForTimeout`s are "nothing happens" checks (no sync after unlink, no link after
+cancel, capture stays off/waiting, a dismissed prompt stays away); everything else waits on what the page shows.
+
 ## CI / release
 
 - `ci.yml`: ubuntu frontend typecheck/lint/unit tests/build; windows fmt/clippy/test, installers, E2E against the release

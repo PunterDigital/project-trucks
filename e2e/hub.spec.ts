@@ -288,6 +288,7 @@ test("cancelling a link stops polling", async ({ page, hub }) => {
   await section.getByRole("button", { name: "Cancel" }).click();
   await expect(section.getByRole("button", { name: "Link account" })).toBeVisible();
   hub.approved = true;
+  // A check that nothing happens: give a stray poll time to land (nothing positive to wait on).
   await page.waitForTimeout(3_000);
   await expect(section.getByTestId("hub-linked")).toHaveCount(0);
 });
