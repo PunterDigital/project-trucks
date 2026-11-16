@@ -276,3 +276,13 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   follows `hidden` in sync responses (older Hubs send none: kept). The account is refreshed once per start/link from
   `GET /me` (the link response has no company) for Settings → Hub's company line. Header pill (`hubPill`) only while
   linked, links to `/settings#hub`.
+- Theme (#4658, Settings → Theme: Light / Dark / System, default System): a setting like the others (`theme` key,
+  `settings.rs`). `src/lib/theme.ts` turns it into the `dark` class on `<html>` (the shadcn tokens in `index.css`) plus
+  `color-scheme`, and mirrors it in localStorage so `public/theme-init.js` (a file, not inline: the CSP's
+  `script-src 'self'` covers it) can set the class from `<head>` before the first paint. Keep the storage key and the
+  rule in step between the two. Rust side: `create_main_window` gives the window the saved theme (title bar, and the
+  webview's `prefers-color-scheme`) and a dark background colour when it starts dark, so there's no white flash;
+  "system" reads Windows' `AppsUseLightTheme`. `update_settings` calls `set_theme` on a change. The dark `--chart-*`
+  ramp is the light one upside down (chart-4 is the strong tone in both). No hard-coded light colours in `src/`:
+  use the tokens. E2E: `e2e/theme.spec.ts` pins the OS preference with `page.emulateMedia` (CI is light, Shay's PC
+  may be dark) and checks the painted background, a restart, and System following the preference.
