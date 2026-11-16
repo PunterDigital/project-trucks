@@ -159,7 +159,9 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
 - No-deadline jobs: an external-market job has delivery time `u32::MAX`. Funbit passes it on as -1, which read as a
   date before the game's clock, so every such delivery was recorded **Late**. Both decoders now read it as no
   deadline (`deadline: None`, never late).
-- E2E teardown can flake on Windows: `rmSync` of the data dir fails while WebView2 still holds a file. A rerun passes.
+- E2E teardown on Windows: `rmSync` of the data dir can fail (EPERM) while WebView2 still holds a file, more often
+  with parallel workers. Since #4675 the `dataDir` fixture only warns, and `e2e/global-teardown.ts` removes this run's
+  leftover `projecttrucks-e2e-*` folders (made after `global-setup.ts` noted the start) once every app has exited.
 - Recorded (telemetry) jobs are sanity-checked in `insert_job_row` (`sanity_flag` in `commands/jobs.rs`): average speed over
   150 km/h or distance under 1 km sets `flagged` + `flag_reason`; manual entries are never auto-flagged.
   Speed is per **in-game** hour (#4771): ETS2's odometer counts game km, ~19 per real km on roads (Shay's recorded

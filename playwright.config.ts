@@ -15,6 +15,8 @@ const workers = process.env.PT_E2E_WORKERS
 
 export default defineConfig({
   testDir: "./e2e",
+  globalSetup: "./e2e/global-setup.ts",
+  globalTeardown: "./e2e/global-teardown.ts",
   workers,
   fullyParallel: true,
   timeout: 90_000,
