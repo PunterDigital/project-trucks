@@ -16,8 +16,8 @@
 //! "Install updates automatically" (card #4683, setting `auto_install_updates`, default off):
 //! when a check finds a newer release, the installer downloads and is verified in the background
 //! (state `ready`), with a `pending.json` next to it. It installs when the app closes
-//! ([`Updater::on_exit`], `/P /UPDATE`: no relaunch, the user just closed it), or, if that had to
-//! wait, on the next launch before the window opens (`/P /R /UPDATE`). Never while ETS2 is running
+//! ([`Updater::on_exit`]), or, if that had to wait, on the next launch before the window opens.
+//! Both use `/P /R /UPDATE`, so the app opens again on the new version (Shay, #4855). Never while ETS2 is running
 //! or a job is being recorded, and never mid-session. Test profiles can fake the running game
 //! ([`GAME_RUNNING_ENV`]) and record installer launches instead of running them ([`DRY_RUN_ENV`]).
 
@@ -45,9 +45,6 @@ pub const STATUS_EVENT: &str = "update:status";
 /// questions), `/R` start the app again when done, `/UPDATE` update in place (skips the reinstall
 /// page and doesn't recreate shortcuts the user removed).
 pub const INSTALLER_ARGS: [&str; 3] = ["/P", "/R", "/UPDATE"];
-/// An automatic install when the app closes: like [`INSTALLER_ARGS`] but without `/R`, so the
-/// app the user just closed doesn't open again.
-pub const CLOSE_INSTALLER_ARGS: [&str; 2] = ["/P", "/UPDATE"];
 /// Written next to a background download: what the next launch may install.
 const PENDING_FILE: &str = "pending.json";
 /// Test profiles only: `1` makes [`game_running`] say ETS2 is running.
@@ -530,8 +527,9 @@ impl Updater {
         Some(path)
     }
 
-    /// `RunEvent::Exit`: installs a ready update (`/P /UPDATE`) unless ETS2 is running or a job is
-    /// being recorded; then it waits for the next launch.
+    /// `RunEvent::Exit`: installs a ready update (`/P /R /UPDATE`, so the app opens again on the
+    /// new version, as a manual update does) unless ETS2 is running or a job is being recorded;
+    /// then it waits for the next launch.
     pub fn on_exit(&self, app: &AppHandle) {
         if !self.auto_install.load(Ordering::SeqCst) {
             return;
@@ -553,7 +551,7 @@ impl Updater {
             tracing::info!(why, "the update installs on the next launch instead");
             return;
         }
-        if let Err(message) = start_installer(&path, &CLOSE_INSTALLER_ARGS) {
+        if let Err(message) = start_installer(&path, &INSTALLER_ARGS) {
             tracing::warn!(%message, "could not start the update on exit");
         }
     }
@@ -1071,8 +1069,7 @@ mod tests {
             Some("a job is being recorded")
         );
         assert_eq!(install_blocker(true, true), Some("ETS2 is running"));
-        // Closing the app never relaunches it; "Install now" and the launch path do.
-        assert!(!CLOSE_INSTALLER_ARGS.contains(&"/R"));
+        // Every install path reopens the app on the new version (#4855).
         assert!(INSTALLER_ARGS.contains(&"/R"));
     }
 

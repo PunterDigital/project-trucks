@@ -345,8 +345,8 @@ export function Settings() {
           Looks for a newer release on GitHub when ProjectTrucks starts. Updating downloads the
           installer, closes the app and reopens it on the new version; your data stays as it is.
           With &ldquo;Install updates automatically&rdquo; on, a new version downloads in the
-          background and installs when you close ProjectTrucks (or the next time you open it), never
-          while ETS2 is running or a job is being recorded.
+          background and installs when you close ProjectTrucks (or the next time you open it), then
+          reopens it on the new version. Never while ETS2 is running or a job is being recorded.
         </p>
       </section>
 

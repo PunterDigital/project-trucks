@@ -300,8 +300,8 @@ test.describe("install updates automatically", () => {
     } finally {
       await app.close();
     }
-    // Closing installs it, without reopening the app (no /R).
-    expect(launches(dataDir)).toEqual([`${feed.assetName} /P /UPDATE`]);
+    // Closing installs it and reopens the app on the new version (/R, #4855).
+    expect(launches(dataDir)).toEqual([`${feed.assetName} /P /R /UPDATE`]);
   });
 
   test("waits while ETS2 runs, then installs on the next launch before the window opens", async ({

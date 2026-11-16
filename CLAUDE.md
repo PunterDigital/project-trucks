@@ -264,7 +264,7 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   "Install updates automatically" (#4683, setting `auto_install_updates`, default off, greyed out while checks are
   off): a found update downloads in the background (state `ready`, banner "Install now") with `pending.json` (version,
   file, sha256) beside it. `RunEvent::Exit` (`Updater::on_exit`, so `.build().run(|app, event| …)` in `lib.rs`)
-  starts it with `/P /UPDATE` (no `/R`: the user just closed the app) unless ETS2 is running (Toolhelp process list,
+  starts it with `/P /R /UPDATE` (reopens the app, as every other install does: Shay, #4855) unless ETS2 is running (Toolhelp process list,
   `eurotrucks2.exe`) or a job is in `CurrentJobState`; then the next launch, in `setup_app` before anything else
   starts, re-hashes the file against `pending.json` and runs it with `/P /R /UPDATE` and exits. `Updater::startup`
   replaced the old unconditional `clean_old_downloads` at launch. Test-profile hooks: `PROJECTTRUCKS_UPDATE_DRY_RUN=1`
