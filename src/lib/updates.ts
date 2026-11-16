@@ -70,6 +70,8 @@ export function updateSummary(status: UpdateStatus): string {
       const pct = downloadPercent(status);
       return `Downloading ${latest}${pct === null ? "…" : ` (${pct}%)`}`;
     }
+    case "ready":
+      return `${latest} is downloaded. It installs when you close ProjectTrucks.`;
     case "installing":
       return `Installing ${latest}. ProjectTrucks will restart.`;
     case "error":

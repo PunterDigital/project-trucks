@@ -7,7 +7,9 @@ import { downloadPercent, publishUpdateStatus, useUpdateStatus } from "@/lib/upd
 /**
  * "Update to vX.Y.Z" under the header when the updater found a newer release. On Windows one
  * click downloads the installer, runs it in passive mode and closes the app; elsewhere the
- * button opens the release page. "Later" hides it until the next launch.
+ * button opens the release page. "Later" hides it until the next launch. With "Install updates
+ * automatically" on, the download happens in the background and the banner says the update
+ * installs when the app closes, with "Install now" to do it straight away.
  */
 export function UpdateBanner() {
   const status = useUpdateStatus();
@@ -45,6 +47,8 @@ export function UpdateBanner() {
   let text: string;
   if (status.state === "downloading") {
     text = `Downloading ProjectTrucks ${version}${pct === null ? "…" : ` (${pct}%)`}`;
+  } else if (status.state === "ready") {
+    text = `ProjectTrucks ${version} is downloaded. It installs when you close the app.`;
   } else if (status.state === "installing") {
     text = `Installing ProjectTrucks ${version}. The app will close and reopen when it's done.`;
   } else {
@@ -63,7 +67,7 @@ export function UpdateBanner() {
       {!busy &&
         (latest.canInstall ? (
           <Button type="button" size="sm" onClick={install}>
-            {failed ? "Try again" : `Update to ${version}`}
+            {failed ? "Try again" : status.state === "ready" ? "Install now" : `Update to ${version}`}
           </Button>
         ) : (
           <Button type="button" size="sm" onClick={openPage}>

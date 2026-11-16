@@ -38,6 +38,9 @@ describe("updateSummary", () => {
       updateSummary(status({ state: "downloading", latest, received: 50, total: 200 })),
     ).toBe("Downloading v0.6.0 (25%)");
     expect(updateSummary(status({ state: "downloading", latest }))).toBe("Downloading v0.6.0…");
+    expect(updateSummary(status({ state: "ready", latest }))).toBe(
+      "v0.6.0 is downloaded. It installs when you close ProjectTrucks.",
+    );
     expect(updateSummary(status({ state: "installing", latest }))).toBe(
       "Installing v0.6.0. ProjectTrucks will restart.",
     );

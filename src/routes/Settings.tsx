@@ -118,6 +118,8 @@ export function Settings() {
     }
   };
 
+  const toggleAutoInstall = (on: boolean) => save({ autoInstallUpdates: on });
+
   const toggleUpdates = async (on: boolean) => {
     await save({ checkUpdates: on });
     if (on && update?.state === "idle") await checkNow();
@@ -308,6 +310,15 @@ export function Settings() {
           />
           <Label htmlFor="check-updates">Check for updates</Label>
         </div>
+        <div className="flex items-center gap-3">
+          <Checkbox
+            id="auto-install-updates"
+            checked={settings.autoInstallUpdates}
+            disabled={!settings.checkUpdates}
+            onCheckedChange={(checked) => toggleAutoInstall(checked === true)}
+          />
+          <Label htmlFor="auto-install-updates">Install updates automatically</Label>
+        </div>
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <span className="text-muted-foreground">
             Version {update?.currentVersion ?? "…"}
@@ -333,6 +344,9 @@ export function Settings() {
         <p className="text-sm text-muted-foreground">
           Looks for a newer release on GitHub when ProjectTrucks starts. Updating downloads the
           installer, closes the app and reopens it on the new version; your data stays as it is.
+          With &ldquo;Install updates automatically&rdquo; on, a new version downloads in the
+          background and installs when you close ProjectTrucks (or the next time you open it), never
+          while ETS2 is running or a job is being recorded.
         </p>
       </section>
 

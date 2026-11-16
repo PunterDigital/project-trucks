@@ -12,8 +12,17 @@
 //! download goes under the data dir. Debug builds outside a test profile don't check at all.
 //! Builds for other platforms can't replace themselves (unsigned), so they only link to the
 //! release page.
+//!
+//! "Install updates automatically" (card #4683, setting `auto_install_updates`, default off):
+//! when a check finds a newer release, the installer downloads and is verified in the background
+//! (state `ready`), with a `pending.json` next to it. It installs when the app closes
+//! ([`Updater::on_exit`], `/P /UPDATE`: no relaunch, the user just closed it), or, if that had to
+//! wait, on the next launch before the window opens (`/P /R /UPDATE`). Never while ETS2 is running
+//! or a job is being recorded, and never mid-session. Test profiles can fake the running game
+//! ([`GAME_RUNNING_ENV`]) and record installer launches instead of running them ([`DRY_RUN_ENV`]).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -36,6 +45,16 @@ pub const STATUS_EVENT: &str = "update:status";
 /// questions), `/R` start the app again when done, `/UPDATE` update in place (skips the reinstall
 /// page and doesn't recreate shortcuts the user removed).
 pub const INSTALLER_ARGS: [&str; 3] = ["/P", "/R", "/UPDATE"];
+/// An automatic install when the app closes: like [`INSTALLER_ARGS`] but without `/R`, so the
+/// app the user just closed doesn't open again.
+pub const CLOSE_INSTALLER_ARGS: [&str; 2] = ["/P", "/UPDATE"];
+/// Written next to a background download: what the next launch may install.
+const PENDING_FILE: &str = "pending.json";
+/// Test profiles only: `1` makes [`game_running`] say ETS2 is running.
+pub const GAME_RUNNING_ENV: &str = "PROJECTTRUCKS_E2E_GAME_RUNNING";
+/// Test profiles only: `1` appends each installer launch to `<data dir>/installer-launches.log`
+/// instead of running the installer.
+pub const DRY_RUN_ENV: &str = "PROJECTTRUCKS_UPDATE_DRY_RUN";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -48,6 +67,9 @@ pub enum UpdateState {
     UpToDate,
     Available,
     Downloading,
+    /// Downloaded and verified in the background ("Install updates automatically"); it installs
+    /// when the app closes.
+    Ready,
     /// The installer has been started; the app is about to exit.
     Installing,
     Error,
@@ -187,9 +209,56 @@ fn check_scheme(url: &str, allow_http: bool) -> Result<(), String> {
     }
 }
 
+/// What a background download leaves in `pending.json` for the next launch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingInstall {
+    /// Without the leading `v`.
+    pub version: String,
+    pub page_url: String,
+    /// The installer's file name in the download folder.
+    pub file: String,
+    /// Lowercase hex SHA-256 of the verified download.
+    pub sha256: String,
+}
+
+/// Why an automatic install has to wait, or `None` when it can go ahead.
+pub fn install_blocker(game_running: bool, job_in_progress: bool) -> Option<&'static str> {
+    if game_running {
+        Some("ETS2 is running")
+    } else if job_in_progress {
+        Some("a job is being recorded")
+    } else {
+        None
+    }
+}
+
+/// Lowercase hex SHA-256 of a file.
+fn sha256_file(path: &Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    let digest: [u8; 32] = Sha256::digest(&bytes).into();
+    Ok(digest.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// The installer a previous session downloaded, if `pending.json` names one that is newer than
+/// `current`, sits in `dir` and still matches its checksum.
+pub fn read_pending(dir: &Path, current: &semver::Version) -> Option<(PendingInstall, PathBuf)> {
+    let text = std::fs::read_to_string(dir.join(PENDING_FILE)).ok()?;
+    let pending: PendingInstall = serde_json::from_str(&text).ok()?;
+    if !is_newer(current, &pending.version)? || !safe_file_name(&pending.file) {
+        return None;
+    }
+    let path = dir.join(&pending.file);
+    let hex = sha256_file(&path).ok()?;
+    hex.eq_ignore_ascii_case(&pending.sha256)
+        .then_some((pending, path))
+}
+
 struct Inner {
     status: UpdateStatus,
     asset: Option<GhAsset>,
+    /// The verified installer a background download left, while the state is `ready`.
+    ready: Option<PathBuf>,
 }
 
 /// Managed state behind the update commands.
@@ -198,13 +267,15 @@ pub struct Updater {
     current: semver::Version,
     download_dir: PathBuf,
     client: reqwest::Client,
+    /// The `auto_install_updates` setting.
+    auto_install: AtomicBool,
     inner: Mutex<Inner>,
     /// Held while a check or a download runs, so they never overlap.
     busy: tokio::sync::Mutex<()>,
 }
 
 impl Updater {
-    pub fn new(app: &AppHandle) -> Self {
+    pub fn new(app: &AppHandle, auto_install: bool) -> Self {
         let test_dir = db::data_dir_override();
         let feed = resolve_feed(
             test_dir.is_some(),
@@ -230,6 +301,7 @@ impl Updater {
             feed,
             download_dir,
             client,
+            auto_install: AtomicBool::new(auto_install),
             inner: Mutex::new(Inner {
                 status: UpdateStatus {
                     current_version: current.to_string(),
@@ -240,6 +312,7 @@ impl Updater {
                     message,
                 },
                 asset: None,
+                ready: None,
             }),
             current,
             busy: tokio::sync::Mutex::new(()),
@@ -266,7 +339,7 @@ impl Updater {
         let Feed::Url { url, allow_http } = &self.feed else {
             return self.status();
         };
-        let Ok(_busy) = self.busy.try_lock() else {
+        let Ok(busy) = self.busy.try_lock() else {
             return self.status();
         };
         self.update(app, |i| {
@@ -274,18 +347,29 @@ impl Updater {
             i.status.message = None;
         });
         let result = self.fetch_release(url, *allow_http).await;
-        self.update(app, |i| {
+        let status = self.update(app, |i| {
             i.status.received = 0;
             i.status.total = 0;
             match result {
                 Ok(release) => match is_newer(&self.current, &release.tag_name) {
                     Some(true) => {
                         let asset = pick_installer(&release.assets).cloned();
-                        i.status.state = UpdateState::Available;
+                        let version = parse_version(&release.tag_name)
+                            .map(|v| v.to_string())
+                            .unwrap_or(release.tag_name);
+                        // The release already downloaded in the background stays ready; a
+                        // newer one replaces it.
+                        let same_as_ready = i.ready.is_some()
+                            && i.status.latest.as_ref().map(|l| l.version.as_str())
+                                == Some(version.as_str());
+                        if same_as_ready {
+                            i.status.state = UpdateState::Ready;
+                        } else {
+                            i.status.state = UpdateState::Available;
+                            i.ready = None;
+                        }
                         i.status.latest = Some(LatestRelease {
-                            version: parse_version(&release.tag_name)
-                                .map(|v| v.to_string())
-                                .unwrap_or(release.tag_name),
+                            version,
                             page_url: release.html_url,
                             can_install: cfg!(windows) && asset.is_some(),
                         });
@@ -295,6 +379,7 @@ impl Updater {
                         i.status.state = UpdateState::UpToDate;
                         i.status.latest = None;
                         i.asset = None;
+                        i.ready = None;
                     }
                     None => {
                         i.status.state = UpdateState::Error;
@@ -304,8 +389,11 @@ impl Updater {
                         ));
                         i.status.latest = None;
                         i.asset = None;
+                        i.ready = None;
                     }
                 },
+                // Offline: a download that is already verified can still install.
+                Err(_) if i.ready.is_some() => i.status.state = UpdateState::Ready,
                 Err(message) => {
                     i.status.state = UpdateState::Error;
                     i.status.message = Some(message);
@@ -313,7 +401,161 @@ impl Updater {
                     i.asset = None;
                 }
             }
-        })
+        });
+        drop(busy);
+        if self.should_prepare() {
+            spawn_prepare(app.clone());
+        }
+        status
+    }
+
+    /// "Install updates automatically" is on and a release this build can install was found but
+    /// isn't downloaded yet.
+    fn should_prepare(&self) -> bool {
+        if !self.auto_install.load(Ordering::SeqCst) {
+            return false;
+        }
+        let inner = self.inner.lock().unwrap();
+        inner.status.state == UpdateState::Available
+            && inner.ready.is_none()
+            && inner.asset.is_some()
+            && inner.status.latest.as_ref().is_some_and(|l| l.can_install)
+    }
+
+    /// The background download for "Install updates automatically": fetches and verifies the
+    /// installer, writes `pending.json` and leaves the state at `ready`. Installs nothing.
+    pub async fn prepare(&self, app: &AppHandle) {
+        let Feed::Url { allow_http, .. } = &self.feed else {
+            return;
+        };
+        let Ok(_busy) = self.busy.try_lock() else {
+            return;
+        };
+        if !self.should_prepare() {
+            return;
+        }
+        let (asset, latest) = {
+            let inner = self.inner.lock().unwrap();
+            (inner.asset.clone(), inner.status.latest.clone())
+        };
+        let (Some(asset), Some(latest)) = (asset, latest) else {
+            return;
+        };
+        self.update(app, |i| {
+            i.status.state = UpdateState::Downloading;
+            i.status.received = 0;
+            i.status.total = asset.size;
+            i.status.message = None;
+        });
+        let result = match self.download(app, &asset, *allow_http).await {
+            Ok((path, sha256)) => {
+                let pending = PendingInstall {
+                    version: latest.version.clone(),
+                    page_url: latest.page_url.clone(),
+                    file: asset.name.clone(),
+                    sha256,
+                };
+                serde_json::to_vec_pretty(&pending)
+                    .map_err(|e| e.to_string())
+                    .and_then(|json| {
+                        std::fs::write(self.download_dir.join(PENDING_FILE), json)
+                            .map_err(|e| format!("Could not save the update: {e}"))
+                    })
+                    .map(|()| path)
+            }
+            Err(e) => Err(e),
+        };
+        let auto = self.auto_install.load(Ordering::SeqCst);
+        self.update(app, |i| match result {
+            // Turned off while it downloaded: back to a plain "available".
+            Ok(_) if !auto => i.status.state = UpdateState::Available,
+            Ok(path) => {
+                tracing::info!(version = %latest.version, "update ready, installs when the app closes");
+                i.status.state = UpdateState::Ready;
+                i.ready = Some(path);
+            }
+            Err(message) => {
+                i.status.state = UpdateState::Error;
+                i.status.message = Some(message);
+            }
+        });
+        if !auto {
+            let _ = std::fs::remove_file(self.download_dir.join(PENDING_FILE));
+        }
+    }
+
+    /// The `auto_install_updates` setting changed: start the background download, or drop a
+    /// ready one (the banner goes back to "Update to …").
+    pub fn set_auto_install(&self, app: &AppHandle, on: bool) {
+        self.auto_install.store(on, Ordering::SeqCst);
+        if on {
+            if self.should_prepare() {
+                spawn_prepare(app.clone());
+            }
+        } else {
+            self.update(app, |i| {
+                if i.ready.take().is_some() && i.status.state == UpdateState::Ready {
+                    i.status.state = UpdateState::Available;
+                }
+            });
+            let _ = std::fs::remove_file(self.download_dir.join(PENDING_FILE));
+        }
+    }
+
+    /// On launch: picks up an installer a previous session downloaded (when auto-install is on and
+    /// it still checks out) and returns its path; otherwise clears the download folder.
+    pub fn startup(&self) -> Option<PathBuf> {
+        let found = self
+            .auto_install
+            .load(Ordering::SeqCst)
+            .then(|| read_pending(&self.download_dir, &self.current))
+            .flatten();
+        let Some((pending, path)) = found else {
+            self.clean_old_downloads();
+            return None;
+        };
+        let mut inner = self.inner.lock().unwrap();
+        if inner.status.state == UpdateState::Disabled {
+            drop(inner);
+            self.clean_old_downloads();
+            return None;
+        }
+        inner.status.state = UpdateState::Ready;
+        inner.status.latest = Some(LatestRelease {
+            version: pending.version,
+            page_url: pending.page_url,
+            can_install: cfg!(windows),
+        });
+        inner.ready = Some(path.clone());
+        Some(path)
+    }
+
+    /// `RunEvent::Exit`: installs a ready update (`/P /UPDATE`) unless ETS2 is running or a job is
+    /// being recorded; then it waits for the next launch.
+    pub fn on_exit(&self, app: &AppHandle) {
+        if !self.auto_install.load(Ordering::SeqCst) {
+            return;
+        }
+        let path = {
+            let inner = self.inner.lock().unwrap();
+            if inner.status.state != UpdateState::Ready {
+                return;
+            }
+            inner.ready.clone()
+        };
+        let Some(path) = path else {
+            return;
+        };
+        let job_in_progress = app
+            .try_state::<crate::telemetry::runner::CurrentJobState>()
+            .is_some_and(|s| s.0.lock().map(|j| j.is_some()).unwrap_or(false));
+        if let Some(why) = install_blocker(game_running(), job_in_progress) {
+            tracing::info!(why, "the update installs on the next launch instead");
+            return;
+        }
+        if let Err(message) = start_installer(&path, &CLOSE_INSTALLER_ARGS) {
+            tracing::warn!(%message, "could not start the update on exit");
+        }
     }
 
     async fn fetch_release(&self, url: &str, allow_http: bool) -> Result<GhRelease, String> {
@@ -342,27 +584,44 @@ impl Updater {
         let Ok(_busy) = self.busy.try_lock() else {
             return Err("An update check or download is already running.".into());
         };
-        let (asset, latest) = {
+        let (asset, latest, ready) = {
             let inner = self.inner.lock().unwrap();
-            (inner.asset.clone(), inner.status.latest.clone())
+            let ready = (inner.status.state == UpdateState::Ready)
+                .then(|| inner.ready.clone())
+                .flatten();
+            (inner.asset.clone(), inner.status.latest.clone(), ready)
         };
-        let (Some(asset), Some(latest)) = (asset, latest) else {
+        let Some(latest) = latest else {
             return Err("There is no update to install. Check for updates first.".into());
         };
         if !latest.can_install {
             return Err("This build can't install updates itself. Open the release page.".into());
         }
 
-        self.update(app, |i| {
-            i.status.state = UpdateState::Downloading;
-            i.status.received = 0;
-            i.status.total = asset.size;
-            i.status.message = None;
-        });
-        let result = match self.download(app, &asset, *allow_http).await {
-            Ok(path) => launch_installer(&path),
-            Err(e) => Err(e),
+        let result = if let Some(path) = ready {
+            // "Install now" on a background download: still the file that was verified?
+            match read_pending(&self.download_dir, &self.current) {
+                Some((_, verified)) if verified == path => start_installer(&path, &INSTALLER_ARGS),
+                _ => Err("The downloaded update changed on disk. Check for updates again.".into()),
+            }
+        } else {
+            let Some(asset) = asset else {
+                return Err("There is no update to install. Check for updates first.".into());
+            };
+            self.update(app, |i| {
+                i.status.state = UpdateState::Downloading;
+                i.status.received = 0;
+                i.status.total = asset.size;
+                i.status.message = None;
+            });
+            match self.download(app, &asset, *allow_http).await {
+                Ok((path, _)) => start_installer(&path, &INSTALLER_ARGS),
+                Err(e) => Err(e),
+            }
         };
+        if result.is_err() {
+            self.inner.lock().unwrap().ready = None;
+        }
         if let Err(message) = result {
             self.update(app, |i| {
                 i.status.state = UpdateState::Error;
@@ -387,7 +646,7 @@ impl Updater {
         app: &AppHandle,
         asset: &GhAsset,
         allow_http: bool,
-    ) -> Result<PathBuf, String> {
+    ) -> Result<(PathBuf, String), String> {
         check_scheme(&asset.browser_download_url, allow_http)?;
         let io = |e: std::io::Error| format!("Could not save the update: {e}");
         let dir = &self.download_dir;
@@ -451,7 +710,7 @@ impl Updater {
         verify_download(received, &hex, asset)?;
         tokio::fs::rename(&partial, &target).await.map_err(io)?;
         tracing::info!(path = %target.display(), bytes = received, "update downloaded and verified");
-        Ok(target)
+        Ok((target, hex))
     }
 
     /// Best-effort removal of an installer a previous update left behind.
@@ -462,10 +721,78 @@ impl Updater {
     }
 }
 
+/// Is ETS2 running? Test profiles never look at the real process list (Shay may be playing while
+/// E2E runs): only [`GAME_RUNNING_ENV`] counts there.
+pub fn game_running() -> bool {
+    if db::data_dir_override().is_some() {
+        return std::env::var(GAME_RUNNING_ENV).is_ok_and(|v| v == "1");
+    }
+    process_running(crate::plugin_installer::GAME_EXE)
+}
+
+#[cfg(windows)]
+fn process_running(exe: &str) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    // SAFETY: the snapshot handle is checked and closed; the entry is sized as the API asks.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return false;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut found = false;
+        let mut ok = Process32FirstW(snapshot, &mut entry) != 0;
+        while ok {
+            let len = entry
+                .szExeFile
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(entry.szExeFile.len());
+            if String::from_utf16_lossy(&entry.szExeFile[..len]).eq_ignore_ascii_case(exe) {
+                found = true;
+                break;
+            }
+            ok = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+        found
+    }
+}
+
+#[cfg(not(windows))]
+fn process_running(_exe: &str) -> bool {
+    false
+}
+
+/// Starts the installer, or in a test profile with [`DRY_RUN_ENV`] set, only notes the launch
+/// in `<data dir>/installer-launches.log` (one line: file name and arguments).
+fn start_installer(path: &Path, args: &[&str]) -> Result<(), String> {
+    let dry_run =
+        db::data_dir_override().filter(|_| std::env::var(DRY_RUN_ENV).is_ok_and(|v| v == "1"));
+    if let Some(dir) = dry_run {
+        use std::io::Write;
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let line = format!("{name} {}\n", args.join(" "));
+        return std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("installer-launches.log"))
+            .and_then(|mut f| f.write_all(line.as_bytes()))
+            .map_err(|e| format!("Could not record the installer launch: {e}"));
+    }
+    launch_installer(path, args)
+}
+
 /// Starts the installer through the shell (like Explorer would), so a per-machine install can
 /// still ask for elevation; ProjectTrucks' own installer is per-user and doesn't.
 #[cfg(windows)]
-fn launch_installer(path: &Path) -> Result<(), String> {
+fn launch_installer(path: &Path, args: &[&str]) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
@@ -475,7 +802,7 @@ fn launch_installer(path: &Path) -> Result<(), String> {
     }
     let verb = wide("open".as_ref());
     let file = wide(path.as_os_str());
-    let params = wide(INSTALLER_ARGS.join(" ").as_ref());
+    let params = wide(args.join(" ").as_ref());
     // SAFETY: every pointer is a NUL-terminated UTF-16 buffer that outlives the call.
     let result = unsafe {
         ShellExecuteW(
@@ -489,7 +816,7 @@ fn launch_installer(path: &Path) -> Result<(), String> {
     };
     // ShellExecuteW returns a value greater than 32 on success.
     if result as isize > 32 {
-        tracing::info!(path = %path.display(), args = ?INSTALLER_ARGS, "started the installer");
+        tracing::info!(path = %path.display(), ?args, "started the installer");
         Ok(())
     } else {
         Err(format!(
@@ -501,8 +828,24 @@ fn launch_installer(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(windows))]
-fn launch_installer(_path: &Path) -> Result<(), String> {
+fn launch_installer(_path: &Path, _args: &[&str]) -> Result<(), String> {
     Err("This build can't install updates itself. Open the release page.".into())
+}
+
+/// On launch, before the window opens: installs an update a previous session downloaded but
+/// couldn't install on close. Returns `true` when the installer started and the app should exit.
+pub fn install_pending_on_launch(path: &Path) -> bool {
+    if let Some(why) = install_blocker(game_running(), false) {
+        tracing::info!(why, "the downloaded update waits until the app closes");
+        return false;
+    }
+    match start_installer(path, &INSTALLER_ARGS) {
+        Ok(()) => true,
+        Err(message) => {
+            tracing::warn!(%message, "could not start the downloaded update");
+            false
+        }
+    }
 }
 
 /// Launch check, run from `setup()` when the `check_updates` setting is on.
@@ -510,6 +853,13 @@ pub fn spawn_launch_check(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let updater = app.state::<Updater>();
         updater.check(&app).await;
+    });
+}
+
+fn spawn_prepare(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let updater = app.state::<Updater>();
+        updater.prepare(&app).await;
     });
 }
 
@@ -713,6 +1063,68 @@ mod tests {
     }
 
     #[test]
+    fn install_waits_for_the_game_and_the_job() {
+        assert_eq!(install_blocker(false, false), None);
+        assert_eq!(install_blocker(true, false), Some("ETS2 is running"));
+        assert_eq!(
+            install_blocker(false, true),
+            Some("a job is being recorded")
+        );
+        assert_eq!(install_blocker(true, true), Some("ETS2 is running"));
+        // Closing the app never relaunches it; "Install now" and the launch path do.
+        assert!(!CLOSE_INSTALLER_ARGS.contains(&"/R"));
+        assert!(INSTALLER_ARGS.contains(&"/R"));
+    }
+
+    #[test]
+    fn pending_install_is_only_used_when_it_checks_out() {
+        let dir = std::env::temp_dir().join(format!("pt-pending-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let body = b"downloaded installer";
+        let file = "ProjectTrucks_0.7.0_x64-setup.exe";
+        std::fs::write(dir.join(file), body).unwrap();
+        let hex: String = Sha256::digest(body)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let write = |p: &PendingInstall| {
+            std::fs::write(dir.join(PENDING_FILE), serde_json::to_vec(p).unwrap()).unwrap()
+        };
+        let good = PendingInstall {
+            version: "0.7.0".into(),
+            page_url: "https://github.com/PunterDigital/project-trucks/releases/tag/v0.7.0".into(),
+            file: file.into(),
+            sha256: hex.to_uppercase(),
+        };
+
+        // Nothing written yet.
+        assert_eq!(read_pending(&dir, &v("0.6.0")), None);
+        write(&good);
+        let (pending, path) = read_pending(&dir, &v("0.6.0")).unwrap();
+        assert_eq!(pending, good);
+        assert_eq!(path, dir.join(file));
+        // Already on that version (or newer): nothing to install.
+        assert_eq!(read_pending(&dir, &v("0.7.0")), None);
+        // The file changed after it was verified.
+        write(&PendingInstall {
+            sha256: "0".repeat(64),
+            ..good.clone()
+        });
+        assert_eq!(read_pending(&dir, &v("0.6.0")), None);
+        // A name that would leave the folder.
+        write(&PendingInstall {
+            file: "..\\evil_x64-setup.exe".into(),
+            ..good.clone()
+        });
+        assert_eq!(read_pending(&dir, &v("0.6.0")), None);
+        // Junk in pending.json.
+        std::fs::write(dir.join(PENDING_FILE), b"{").unwrap();
+        assert_eq!(read_pending(&dir, &v("0.6.0")), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn status_serialises_for_the_frontend() {
         let status = UpdateStatus {
             current_version: "0.5.0".into(),
@@ -724,6 +1136,7 @@ mod tests {
         };
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["state"], "upToDate");
+        assert_eq!(serde_json::to_value(UpdateState::Ready).unwrap(), "ready");
         assert_eq!(json["currentVersion"], "0.5.0");
     }
 }

@@ -29,7 +29,7 @@ const OLD_DLL_NAME: &str = "ets2-telemetry-server.dll";
 const OLD_DLL_SHA: [u8; 32] =
     hex32("9923e368d5e1abb19f67fbc560f6213433ebc51d664b6227785486f6bc36c160");
 /// The game's 64-bit executable; its presence is how a folder "looks like ETS2".
-const GAME_EXE: &str = "eurotrucks2.exe";
+pub(crate) const GAME_EXE: &str = "eurotrucks2.exe";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]

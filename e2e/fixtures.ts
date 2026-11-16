@@ -18,7 +18,7 @@ import { chromium, expect, test as base, type Browser, type Page } from "@playwr
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
-function resolveExe(): string {
+export function resolveExe(): string {
   const fromEnv = process.env.PROJECTTRUCKS_EXE;
   if (fromEnv) return path.resolve(fromEnv);
   for (const profile of ["release", "debug"]) {
