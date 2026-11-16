@@ -60,8 +60,16 @@ pub fn run() {
             hub::hub_job_states,
             hub::hub_set_hidden,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // "Install updates automatically": a ready update installs as the app closes.
+                if let Some(updater) = app.try_state::<updater::Updater>() {
+                    updater.on_exit(app);
+                }
+            }
+        });
 }
 
 fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
@@ -75,6 +83,16 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     app.manage(telemetry::runner::CurrentJobState::default());
     tauri::async_runtime::block_on(settings::detect_on_first_run(&pool))?;
     let saved = tauri::async_runtime::block_on(settings::load(&pool))?;
+    // Before anything else starts: an update a previous session downloaded installs now, before
+    // the window opens, if it couldn't on close (ETS2 was running).
+    let updater = updater::Updater::new(&handle, saved.auto_install_updates);
+    if let Some(path) = updater.startup() {
+        if updater::install_pending_on_launch(&path) {
+            tracing::info!("installer started for the downloaded update, exiting");
+            tauri::async_runtime::block_on(pool.close());
+            std::process::exit(0);
+        }
+    }
     let auto_capture = saved.auto_capture;
     let (capture_tx, capture_rx) = tokio::sync::watch::channel(auto_capture);
     // ProjectTrucks Hub: the live-status feed the runner publishes to, and the sync state.
@@ -92,8 +110,6 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         capture_rx,
     ));
     app.manage(db::AppState { pool });
-    let updater = updater::Updater::new(&handle);
-    updater.clean_old_downloads();
     app.manage(updater);
     if saved.check_updates {
         updater::spawn_launch_check(handle.clone());

@@ -1,11 +1,12 @@
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { Page } from "@playwright/test";
 
-import { expect, launchApp, test as base } from "./fixtures";
+import { expect, launchApp, resolveExe, test as base, type RunningApp } from "./fixtures";
 
 base.skip(process.platform !== "win32", "WebView2 (Windows) is the only webview with CDP");
 
@@ -125,6 +126,8 @@ test.describe("a newer release", () => {
 
     await openSettings(page);
     await expect(page.getByLabel("Check for updates")).toBeChecked();
+    // Off by default (#4683): nothing downloads by itself.
+    await expect(page.getByLabel("Install updates automatically")).not.toBeChecked();
     await expect(page.getByTestId("update-summary")).toHaveText("v99.0.0 is available.");
 
     await banner.getByRole("button", { name: "Later" }).click();
@@ -234,4 +237,114 @@ base("a test profile without a feed never checks", async ({ page, dataDir }) => 
   await expect(page.getByRole("button", { name: "Check now" })).toBeDisabled();
   await expect(page.getByTestId("update-banner")).toHaveCount(0);
   expect(existsSync(path.join(dataDir, "data", "update"))).toBe(false);
+});
+
+// "Install updates automatically" (#4683). PROJECTTRUCKS_UPDATE_DRY_RUN makes the app write each
+// installer launch to <data dir>/installer-launches.log instead of running it, and
+// PROJECTTRUCKS_E2E_GAME_RUNNING stands in for a running ETS2 (test profiles never look at the
+// real process list).
+
+function launches(dataDir: string): string[] {
+  const log = path.join(dataDir, "data", "installer-launches.log");
+  if (!existsSync(log)) return [];
+  return readFileSync(log, "utf8").split("\n").filter(Boolean);
+}
+
+/** Closes the app like its close button does (WM_CLOSE, no /F), so its exit hook runs. */
+async function closeGracefully(app: RunningApp) {
+  execFileSync("taskkill", ["/PID", String(app.process.pid)]);
+  const code = await Promise.race([
+    app.exited,
+    new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 20_000)),
+  ]);
+  expect(code).toBe(0);
+}
+
+/** Turns the setting on and waits for the background download to finish. */
+async function turnOnAutoInstall(page: Page) {
+  await openSettings(page);
+  const toggle = page.getByLabel("Install updates automatically");
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await expect(page.getByTestId("update-summary")).toHaveText(
+    "v99.0.0 is downloaded. It installs when you close ProjectTrucks.",
+  );
+}
+
+test.describe("install updates automatically", () => {
+  test("downloads in the background and installs when the app closes", async ({
+    dataDir,
+    feed,
+  }, testInfo) => {
+    const port = 9300 + testInfo.workerIndex;
+    const env = { PROJECTTRUCKS_UPDATE_FEED: feed.url, PROJECTTRUCKS_UPDATE_DRY_RUN: "1" };
+    const app = await launchApp({ dataDir, port, env });
+    try {
+      const { page } = app;
+      await expect(page.getByTestId("update-banner")).toBeVisible();
+      expect(feed.downloads).toBe(0);
+      await turnOnAutoInstall(page);
+      const banner = page.getByTestId("update-banner");
+      await expect(banner).toContainText(
+        "ProjectTrucks v99.0.0 is downloaded. It installs when you close the app.",
+      );
+      await expect(banner.getByRole("button", { name: "Install now" })).toBeVisible();
+      expect(feed.downloads).toBe(1);
+      expect(readdirSync(path.join(dataDir, "data", "update")).sort()).toEqual(
+        [feed.assetName, "pending.json"].sort(),
+      );
+      // Nothing is installed while the app is open.
+      expect(launches(dataDir)).toEqual([]);
+      expect(app.errors).toEqual([]);
+      await closeGracefully(app);
+    } finally {
+      await app.close();
+    }
+    // Closing installs it, without reopening the app (no /R).
+    expect(launches(dataDir)).toEqual([`${feed.assetName} /P /UPDATE`]);
+  });
+
+  test("waits while ETS2 runs, then installs on the next launch before the window opens", async ({
+    dataDir,
+    feed,
+  }, testInfo) => {
+    const port = 9300 + testInfo.workerIndex;
+    const env = { PROJECTTRUCKS_UPDATE_FEED: feed.url, PROJECTTRUCKS_UPDATE_DRY_RUN: "1" };
+    const first = await launchApp({
+      dataDir,
+      port,
+      env: { ...env, PROJECTTRUCKS_E2E_GAME_RUNNING: "1" },
+    });
+    try {
+      await turnOnAutoInstall(first.page);
+      expect(first.errors).toEqual([]);
+      await closeGracefully(first);
+    } finally {
+      await first.close();
+    }
+    // ETS2 was running: nothing installed on close.
+    expect(launches(dataDir)).toEqual([]);
+    expect(feed.feedRequests).toBe(1);
+
+    // Next launch, game closed: the installer starts (relaunching the app afterwards) and the app
+    // exits before it opens its window or checks the feed again.
+    const second = spawn(resolveExe(), [], {
+      env: {
+        ...process.env,
+        ...env,
+        PROJECTTRUCKS_DATA_DIR: path.join(dataDir, "data"),
+        PROJECTTRUCKS_E2E_CDP_PORT: String(port),
+      },
+      stdio: "inherit",
+    });
+    const code = await Promise.race([
+      new Promise<number | null>((r) => second.once("exit", (c) => r(c))),
+      new Promise<"timeout">((r) => setTimeout(() => r("timeout"), 30_000)),
+    ]);
+    if (code === "timeout") second.kill();
+    expect(code).toBe(0);
+    expect(launches(dataDir)).toEqual([`${feed.assetName} /P /R /UPDATE`]);
+    expect(feed.feedRequests).toBe(1);
+    expect(feed.downloads).toBe(1);
+  });
 });

@@ -1,7 +1,9 @@
 //! App settings (the `settings` key/value table) and the Steam lookup that finds ETS2.
 //!
 //! Keys: `auto_capture` ("true"/"false", default off), `ets2_install_path`, `units` ("km"/"mi"),
-//! `check_updates` ("true"/"false", default on: check GitHub for a newer release on launch) and
+//! `check_updates` ("true"/"false", default on: check GitHub for a newer release on launch),
+//! `auto_install_updates` ("true"/"false", default off: download a found update in the background
+//! and install it when the app closes, see `updater.rs`) and
 //! `theme` ("light"/"dark"/"system", default system: follow Windows).
 //! Changing `auto_capture` flips the [`AutoCapture`] channel the telemetry task listens on, so
 //! polling starts or stops within a tick.
@@ -20,6 +22,7 @@ const KEY_ETS2_PATH: &str = "ets2_install_path";
 const KEY_UNITS: &str = "units";
 const KEY_PLUGIN_PROMPT: &str = "plugin_prompt_dismissed";
 const KEY_CHECK_UPDATES: &str = "check_updates";
+const KEY_AUTO_INSTALL: &str = "auto_install_updates";
 const KEY_THEME: &str = "theme";
 
 /// The values `theme` can hold; anything else in the table reads as `"system"`.
@@ -43,6 +46,9 @@ pub struct Settings {
     pub plugin_prompt_dismissed: Option<String>,
     /// Check for a newer release when the app starts (default on).
     pub check_updates: bool,
+    /// Download a found update in the background and install it when the app closes (default
+    /// off).
+    pub auto_install_updates: bool,
     /// `"light"`, `"dark"` or `"system"` (default: follow Windows).
     pub theme: String,
 }
@@ -56,6 +62,7 @@ pub struct SettingsPatch {
     pub units: Option<String>,
     pub plugin_prompt_dismissed: Option<String>,
     pub check_updates: Option<bool>,
+    pub auto_install_updates: Option<bool>,
     pub theme: Option<String>,
 }
 
@@ -92,6 +99,7 @@ pub async fn load(pool: &SqlitePool) -> Result<Settings, sqlx::Error> {
             .await?
             .filter(|p| !p.is_empty()),
         check_updates: get(pool, KEY_CHECK_UPDATES).await?.as_deref() != Some("false"),
+        auto_install_updates: get(pool, KEY_AUTO_INSTALL).await?.as_deref() == Some("true"),
         theme: match get(pool, KEY_THEME).await? {
             Some(t) if THEMES.contains(&t.as_str()) => t,
             _ => "system".to_string(),
@@ -142,6 +150,11 @@ pub async fn apply(pool: &SqlitePool, patch: SettingsPatch) -> Result<Settings, 
             .await
             .map_err(io)?;
     }
+    if let Some(on) = patch.auto_install_updates {
+        put(pool, KEY_AUTO_INSTALL, if on { "true" } else { "false" })
+            .await
+            .map_err(io)?;
+    }
     if let Some(sha) = &patch.plugin_prompt_dismissed {
         put(pool, KEY_PLUGIN_PROMPT, sha.trim()).await.map_err(io)?;
     }
@@ -161,8 +174,15 @@ pub async fn update_settings(
     patch: SettingsPatch,
 ) -> Result<Settings, String> {
     let theme_changed = patch.theme.is_some();
+    let auto_install_changed = patch.auto_install_updates.is_some();
     let settings = apply(&state.pool, patch).await?;
     capture.0.send_replace(settings.auto_capture);
+    if auto_install_changed {
+        use tauri::Manager;
+        if let Some(updater) = app.try_state::<crate::updater::Updater>() {
+            updater.set_auto_install(&app, settings.auto_install_updates);
+        }
+    }
     if theme_changed {
         // The title bar and the webview's `prefers-color-scheme` follow the choice too; the page
         // itself switches its `dark` class (src/lib/theme.ts).
@@ -398,6 +418,7 @@ mod tests {
         assert_eq!(defaults.units, "km");
         assert_eq!(defaults.plugin_prompt_dismissed, None);
         assert!(defaults.check_updates);
+        assert!(!defaults.auto_install_updates);
         assert_eq!(defaults.theme, "system");
 
         let saved = apply(
@@ -408,6 +429,7 @@ mod tests {
                 units: Some("mi".into()),
                 plugin_prompt_dismissed: Some("abc123".into()),
                 check_updates: Some(false),
+                auto_install_updates: Some(true),
                 theme: Some("dark".into()),
             },
         )
@@ -415,6 +437,7 @@ mod tests {
         .unwrap();
         assert_eq!(saved.plugin_prompt_dismissed.as_deref(), Some("abc123"));
         assert!(!saved.check_updates);
+        assert!(saved.auto_install_updates);
         assert!(saved.auto_capture);
         assert_eq!(saved.ets2_install_path.as_deref(), Some(r"D:\Games\ETS2"));
         assert_eq!(saved.units, "mi");
@@ -434,6 +457,7 @@ mod tests {
         assert_eq!(cleared.ets2_install_path, None);
         assert_eq!(cleared.plugin_prompt_dismissed.as_deref(), Some("abc123"));
         assert!(!cleared.check_updates);
+        assert!(cleared.auto_install_updates);
         assert_eq!(cleared.theme, "dark");
 
         // An unknown theme is refused, and a stray value in the table reads as "system".

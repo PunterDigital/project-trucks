@@ -261,6 +261,17 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   serving a stub exe that logs its arguments. A stub named `*setup.exe` needs an `asInvoker` manifest
   (`rustc … -C link-arg=/MANIFEST:EMBED "-Clink-arg=/MANIFESTUAC:level='asInvoker' uiAccess='false'"`), or Windows'
   installer detection (on by default) can demand elevation for the name alone. Never run a real release installer locally: `/P` replaces Shay's install.
+  "Install updates automatically" (#4683, setting `auto_install_updates`, default off, greyed out while checks are
+  off): a found update downloads in the background (state `ready`, banner "Install now") with `pending.json` (version,
+  file, sha256) beside it. `RunEvent::Exit` (`Updater::on_exit`, so `.build().run(|app, event| …)` in `lib.rs`)
+  starts it with `/P /UPDATE` (no `/R`: the user just closed the app) unless ETS2 is running (Toolhelp process list,
+  `eurotrucks2.exe`) or a job is in `CurrentJobState`; then the next launch, in `setup_app` before anything else
+  starts, re-hashes the file against `pending.json` and runs it with `/P /R /UPDATE` and exits. `Updater::startup`
+  replaced the old unconditional `clean_old_downloads` at launch. Test-profile hooks: `PROJECTTRUCKS_UPDATE_DRY_RUN=1`
+  appends each installer launch to `<data dir>/installer-launches.log` instead of running it, and
+  `PROJECTTRUCKS_E2E_GAME_RUNNING=1` fakes a running ETS2 (test profiles never read the real process list, so E2E
+  behaves the same while Shay plays). E2E closes the app with `taskkill /PID` (no `/F`, i.e. WM_CLOSE) so the exit
+  hook runs; the fixture's `close()` kills it hard and skips the hook.
 - ProjectTrucks Hub sync (#4634, `src-tauri/src/hub/`, `src/components/HubSettings.tsx`, Settings → "ProjectTrucks Hub"):
   links the app to a Hub account (https://project-trucks.shaypunter.co.uk, the Laravel app in `../project-trucks-hub`; API
   contract in its `docs/api.md`) with the device-code flow: `hub_link_start` asks for a code, shows it, opens the approval page

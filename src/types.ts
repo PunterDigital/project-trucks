@@ -172,6 +172,8 @@ export interface Settings {
   pluginPromptDismissed: string | null;
   /** Check GitHub for a newer release when the app starts (default on). */
   checkUpdates: boolean;
+  /** Download updates in the background and install them when the app closes (default off). */
+  autoInstallUpdates: boolean;
   theme: Theme;
 }
 
@@ -190,6 +192,7 @@ export interface SettingsPatch {
   units?: "km" | "mi";
   pluginPromptDismissed?: string;
   checkUpdates?: boolean;
+  autoInstallUpdates?: boolean;
   theme?: Theme;
 }
 
@@ -202,6 +205,8 @@ export type UpdateState =
   | "upToDate"
   | "available"
   | "downloading"
+  /** Downloaded and verified in the background; installs when the app closes. */
+  | "ready"
   | "installing"
   | "error";
 
