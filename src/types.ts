@@ -162,6 +162,9 @@ export interface DbPing {
 
 // --- Settings ------------------------------------------------------------
 
+/** Light / Dark / System (follow Windows). */
+export type Theme = "light" | "dark" | "system";
+
 export interface Settings {
   autoCapture: boolean;
   ets2InstallPath: string | null;
@@ -169,6 +172,7 @@ export interface Settings {
   pluginPromptDismissed: string | null;
   /** Check GitHub for a newer release when the app starts (default on). */
   checkUpdates: boolean;
+  theme: Theme;
 }
 
 export type PluginState = "noFolder" | "badFolder" | "notInstalled" | "outdated" | "installed";
@@ -186,6 +190,7 @@ export interface SettingsPatch {
   units?: "km" | "mi";
   pluginPromptDismissed?: string;
   checkUpdates?: boolean;
+  theme?: Theme;
 }
 
 // --- App updates (src-tauri/src/updater.rs) ------------------------------

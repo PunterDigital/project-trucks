@@ -1,12 +1,14 @@
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { CircleCheckIcon, InfoIcon, TriangleAlertIcon, OctagonXIcon, Loader2Icon } from "lucide-react"
 
-// We follow the OS preference directly — no next-themes dependency. When we
-// add an in-app theme toggle, drive this off the same store.
+import { useResolvedTheme } from "@/lib/theme"
+
+// Follows the app's Light / Dark / System setting (src/lib/theme.ts), no next-themes.
 const Toaster = ({ ...props }: ToasterProps) => {
+  const theme = useResolvedTheme()
   return (
     <Sonner
-      theme="system"
+      theme={theme}
       className="toaster group"
       icons={{
         success: (

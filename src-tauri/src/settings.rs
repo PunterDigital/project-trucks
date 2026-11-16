@@ -1,7 +1,8 @@
 //! App settings (the `settings` key/value table) and the Steam lookup that finds ETS2.
 //!
-//! Keys: `auto_capture` ("true"/"false", default off), `ets2_install_path`, `units` ("km"/"mi") and
-//! `check_updates` ("true"/"false", default on: check GitHub for a newer release on launch).
+//! Keys: `auto_capture` ("true"/"false", default off), `ets2_install_path`, `units` ("km"/"mi"),
+//! `check_updates` ("true"/"false", default on: check GitHub for a newer release on launch) and
+//! `theme` ("light"/"dark"/"system", default system: follow Windows).
 //! Changing `auto_capture` flips the [`AutoCapture`] channel the telemetry task listens on, so
 //! polling starts or stops within a tick.
 
@@ -19,6 +20,10 @@ const KEY_ETS2_PATH: &str = "ets2_install_path";
 const KEY_UNITS: &str = "units";
 const KEY_PLUGIN_PROMPT: &str = "plugin_prompt_dismissed";
 const KEY_CHECK_UPDATES: &str = "check_updates";
+const KEY_THEME: &str = "theme";
+
+/// The values `theme` can hold; anything else in the table reads as `"system"`.
+const THEMES: [&str; 3] = ["light", "dark", "system"];
 
 /// Steam app id of Euro Truck Simulator 2.
 const ETS2_APP_ID: &str = "227300";
@@ -38,6 +43,8 @@ pub struct Settings {
     pub plugin_prompt_dismissed: Option<String>,
     /// Check for a newer release when the app starts (default on).
     pub check_updates: bool,
+    /// `"light"`, `"dark"` or `"system"` (default: follow Windows).
+    pub theme: String,
 }
 
 /// Fields to change; absent ones are left alone. An empty `ets2_install_path` clears it.
@@ -49,6 +56,7 @@ pub struct SettingsPatch {
     pub units: Option<String>,
     pub plugin_prompt_dismissed: Option<String>,
     pub check_updates: Option<bool>,
+    pub theme: Option<String>,
 }
 
 pub(crate) async fn get(pool: &SqlitePool, key: &str) -> Result<Option<String>, sqlx::Error> {
@@ -84,6 +92,10 @@ pub async fn load(pool: &SqlitePool) -> Result<Settings, sqlx::Error> {
             .await?
             .filter(|p| !p.is_empty()),
         check_updates: get(pool, KEY_CHECK_UPDATES).await?.as_deref() != Some("false"),
+        theme: match get(pool, KEY_THEME).await? {
+            Some(t) if THEMES.contains(&t.as_str()) => t,
+            _ => "system".to_string(),
+        },
     })
 }
 
@@ -103,7 +115,17 @@ pub async fn apply(pool: &SqlitePool, patch: SettingsPatch) -> Result<Settings, 
             return Err(format!("units must be \"km\" or \"mi\", not {units:?}"));
         }
     }
+    if let Some(theme) = &patch.theme {
+        if !THEMES.contains(&theme.as_str()) {
+            return Err(format!(
+                "theme must be \"light\", \"dark\" or \"system\", not {theme:?}"
+            ));
+        }
+    }
     let io = |e: sqlx::Error| e.to_string();
+    if let Some(theme) = &patch.theme {
+        put(pool, KEY_THEME, theme).await.map_err(io)?;
+    }
     if let Some(on) = patch.auto_capture {
         put(pool, KEY_AUTO_CAPTURE, if on { "true" } else { "false" })
             .await
@@ -133,13 +155,73 @@ pub async fn get_settings(state: State<'_, AppState>) -> Result<Settings, String
 
 #[tauri::command]
 pub async fn update_settings(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     capture: State<'_, AutoCapture>,
     patch: SettingsPatch,
 ) -> Result<Settings, String> {
+    let theme_changed = patch.theme.is_some();
     let settings = apply(&state.pool, patch).await?;
     capture.0.send_replace(settings.auto_capture);
+    if theme_changed {
+        // The title bar and the webview's `prefers-color-scheme` follow the choice too; the page
+        // itself switches its `dark` class (src/lib/theme.ts).
+        use tauri::Manager;
+        if let Some(window) = app.get_webview_window("main") {
+            if let Err(err) = window.set_theme(window_theme(&settings.theme)) {
+                tracing::warn!(%err, "could not change the window theme");
+            }
+        }
+    }
     Ok(settings)
+}
+
+/// The native window theme for a saved `theme`: `None` follows Windows.
+pub fn window_theme(theme: &str) -> Option<tauri::Theme> {
+    match theme {
+        "light" => Some(tauri::Theme::Light),
+        "dark" => Some(tauri::Theme::Dark),
+        _ => None,
+    }
+}
+
+/// Whether the window should start dark: the saved choice, or Windows' app mode for "system".
+pub fn starts_dark(theme: &str) -> bool {
+    match theme {
+        "dark" => true,
+        "light" => false,
+        _ => system_prefers_dark(),
+    }
+}
+
+/// Windows' "app mode" (Settings → Personalisation → Colours). `false` when it can't be read.
+#[cfg(windows)]
+fn system_prefers_dark() -> bool {
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+    let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+    let key = wide(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+    let name = wide("AppsUseLightTheme");
+    let mut value: u32 = 1;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    // SAFETY: both names are NUL-terminated UTF-16, and `value`/`size` describe a 4-byte buffer
+    // that outlives the call.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            (&raw mut value).cast(),
+            &raw mut size,
+        )
+    };
+    status == 0 && value == 0
+}
+
+#[cfg(not(windows))]
+fn system_prefers_dark() -> bool {
+    false
 }
 
 /// Looks for ETS2 in Steam's libraries; `None` if Steam or the game is not found.
@@ -316,6 +398,7 @@ mod tests {
         assert_eq!(defaults.units, "km");
         assert_eq!(defaults.plugin_prompt_dismissed, None);
         assert!(defaults.check_updates);
+        assert_eq!(defaults.theme, "system");
 
         let saved = apply(
             &pool,
@@ -325,6 +408,7 @@ mod tests {
                 units: Some("mi".into()),
                 plugin_prompt_dismissed: Some("abc123".into()),
                 check_updates: Some(false),
+                theme: Some("dark".into()),
             },
         )
         .await
@@ -334,6 +418,7 @@ mod tests {
         assert!(saved.auto_capture);
         assert_eq!(saved.ets2_install_path.as_deref(), Some(r"D:\Games\ETS2"));
         assert_eq!(saved.units, "mi");
+        assert_eq!(saved.theme, "dark");
 
         // Partial patches leave the rest alone; an empty path clears it.
         let cleared = apply(
@@ -349,6 +434,25 @@ mod tests {
         assert_eq!(cleared.ets2_install_path, None);
         assert_eq!(cleared.plugin_prompt_dismissed.as_deref(), Some("abc123"));
         assert!(!cleared.check_updates);
+        assert_eq!(cleared.theme, "dark");
+
+        // An unknown theme is refused, and a stray value in the table reads as "system".
+        assert!(apply(
+            &pool,
+            SettingsPatch {
+                theme: Some("sepia".into()),
+                ..Default::default()
+            }
+        )
+        .await
+        .is_err());
+        put(&pool, KEY_THEME, "sepia").await.unwrap();
+        assert_eq!(load(&pool).await.unwrap().theme, "system");
+        assert_eq!(window_theme("dark"), Some(tauri::Theme::Dark));
+        assert_eq!(window_theme("light"), Some(tauri::Theme::Light));
+        assert_eq!(window_theme("system"), None);
+        assert!(starts_dark("dark"));
+        assert!(!starts_dark("light"));
 
         assert!(apply(
             &pool,
