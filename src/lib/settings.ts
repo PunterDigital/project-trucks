@@ -5,6 +5,7 @@ import { useSyncExternalStore } from "react";
 
 import { api } from "@/lib/api";
 import { setUnits } from "@/lib/format";
+import { applyTheme } from "@/lib/theme";
 import type { Settings, SettingsPatch } from "@/types";
 
 let current: Settings | null = null;
@@ -13,6 +14,7 @@ const listeners = new Set<() => void>();
 function publish(next: Settings) {
   current = next;
   setUnits(next.units);
+  applyTheme(next.theme);
   listeners.forEach((l) => l());
 }
 

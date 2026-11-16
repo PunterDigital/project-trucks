@@ -12,7 +12,7 @@ import { api } from "@/lib/api";
 import { updateSettings, useSettings } from "@/lib/settings";
 import { publishUpdateStatus, updateSummary, useUpdateStatus } from "@/lib/updates";
 import { useTelemetryStatus, type TelemetryStatus } from "@/lib/useTelemetryEvents";
-import type { PluginState, PluginStatus, SettingsPatch } from "@/types";
+import type { PluginState, PluginStatus, SettingsPatch, Theme } from "@/types";
 
 const STATUS_LABEL: Record<TelemetryStatus, string> = {
   not_connected: "Not connected",
@@ -27,6 +27,12 @@ const PLUGIN_LABEL: Record<PluginState, string> = {
   notInstalled: "Not installed",
   outdated: "Outdated",
   installed: "Installed",
+};
+
+const THEME_LABEL: Record<Theme, string> = {
+  light: "Light",
+  dark: "Dark",
+  system: "System",
 };
 
 /** What the plugin check found for one folder; `error` when the check itself failed. */
@@ -265,6 +271,28 @@ export function Settings() {
         </div>
         <p className="text-sm text-muted-foreground">
           Distances are stored in kilometres; this only changes how they are shown.
+        </p>
+      </section>
+
+      <section className="space-y-3" aria-labelledby="theme-heading">
+        <h3 id="theme-heading" className="text-lg font-medium">
+          Theme
+        </h3>
+        <div className="flex gap-2" role="group" aria-label="Theme">
+          {(["light", "dark", "system"] as const).map((theme) => (
+            <Button
+              key={theme}
+              type="button"
+              variant={settings.theme === theme ? "default" : "outline"}
+              aria-pressed={settings.theme === theme}
+              onClick={() => save({ theme })}
+            >
+              {THEME_LABEL[theme]}
+            </Button>
+          ))}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          System follows the light or dark app mode set in Windows.
         </p>
       </section>
 

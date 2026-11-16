@@ -98,7 +98,7 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     if saved.check_updates {
         updater::spawn_launch_check(handle.clone());
     }
-    create_main_window(app)?;
+    create_main_window(app, &saved.theme)?;
     Ok(())
 }
 
@@ -112,10 +112,16 @@ const E2E_CDP_PORT_ENV: &str = "PROJECTTRUCKS_E2E_CDP_PORT";
 const WEBVIEW2_DEFAULT_ARGS: &str =
     "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
 
+/// `--background` of the dark theme in `src/index.css` (oklch(0.145 0 0)).
+const DARK_BACKGROUND: tauri::window::Color = tauri::window::Color(10, 10, 10, 255);
+
 /// Builds the main window from `tauri.conf.json` (where it is `create: false`)
 /// so test-only overrides can be applied. WebView2 ignores its `WEBVIEW2_*`
 /// env vars on some machines, so we pass them through the builder instead.
-fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
+///
+/// `theme` is the saved Light / Dark / System setting: the title bar follows it, and a dark
+/// start paints the window dark before the page has loaded (no white flash).
+fn create_main_window(app: &tauri::App, theme: &str) -> tauri::Result<()> {
     let config = app
         .config()
         .app
@@ -124,7 +130,11 @@ fn create_main_window(app: &tauri::App) -> tauri::Result<()> {
         .find(|w| w.label == "main")
         .cloned()
         .expect("tauri.conf.json defines the main window");
-    let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?;
+    let mut builder = tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+        .theme(settings::window_theme(theme));
+    if settings::starts_dark(theme) {
+        builder = builder.background_color(DARK_BACKGROUND);
+    }
 
     if let Some(dir) = db::data_dir_override() {
         builder = builder.data_directory(dir.join("webview"));

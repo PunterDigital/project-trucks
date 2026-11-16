@@ -102,11 +102,13 @@
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.556 0 0);
-    --chart-1: oklch(0.87 0 0);
-    --chart-2: oklch(0.556 0 0);
-    --chart-3: oklch(0.439 0 0);
-    --chart-4: oklch(0.371 0 0);
-    --chart-5: oklch(0.269 0 0);
+    /* The light ramp upside down: chart-4 (deliveries, on time) is the strong tone in both
+       themes and chart-1 (free roam, late) the quiet one, each clear of the dark card. */
+    --chart-1: oklch(0.5 0 0);
+    --chart-2: oklch(0.62 0 0);
+    --chart-3: oklch(0.74 0 0);
+    --chart-4: oklch(0.87 0 0);
+    --chart-5: oklch(0.97 0 0);
     --sidebar: oklch(0.205 0 0);
     --sidebar-foreground: oklch(0.985 0 0);
     --sidebar-primary: oklch(0.488 0.243 264.376);
