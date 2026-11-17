@@ -19,10 +19,18 @@
 //! drop-off and is cleared when the job is handed in. So a job whose route was under
 //! [`Config::arrival_km`] and then reads 0 on two samples in a row counts as delivered, and the
 //! stale job left in the frame is ignored until the frame shows something else.
+//!
+//! Gameplay events (#4756): RenCloud's plugin reports the game's own "delivered" and "cancelled"
+//! events (see [`GameplayEvent`]). When one arrives the tracked job ends right there with that
+//! outcome, paused or not, so the results screen no longer holds a delivery back and none of the
+//! rules above are needed. They stay for Funbit's plugin and for an event the app missed.
+//! Tolls, fines and ferry/train fares are kept on the running job ([`JobInProgress::expenses`]),
+//! or come out as [`Event::Expense`] when there is none.
 
 use chrono::{Duration, NaiveDateTime};
 
-use super::{JobSnapshot, TelemetrySnapshot};
+use super::{DeliveryReport, GameplayEvent, JobSnapshot, TelemetrySnapshot, TruckSnapshot};
+pub use crate::db::models::ExpenseKind;
 use crate::db::models::{SessionKind, SessionStatus};
 
 /// Tunable thresholds (the defaults follow the plan).
@@ -73,6 +81,62 @@ pub struct JobInProgress {
     /// Fuel burned and damage taken so far (#4771). Saved with the job, so a restart keeps them.
     #[serde(default)]
     pub wear: JobWear,
+    /// Tolls, fines and fares paid during the job (#4756), written with the job when it ends.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub expenses: Vec<Expense>,
+}
+
+/// A toll, fine or ferry/train fare the game charged (#4756).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Expense {
+    pub kind: ExpenseKind,
+    pub amount: i64,
+    /// Fine: the game's offence id. Ferry/train: "From → To".
+    pub detail: Option<String>,
+    pub at: NaiveDateTime,
+    pub truck_make: Option<String>,
+    pub truck_model: Option<String>,
+}
+
+impl Expense {
+    /// The cost in a gameplay event; `None` for the job events.
+    pub fn from_event(
+        event: &GameplayEvent,
+        at: NaiveDateTime,
+        truck: &TruckSnapshot,
+    ) -> Option<Self> {
+        let trip = |source: &Option<String>, target: &Option<String>| match (source, target) {
+            (Some(s), Some(t)) => Some(format!("{s} → {t}")),
+            (Some(one), None) | (None, Some(one)) => Some(one.clone()),
+            (None, None) => None,
+        };
+        let (kind, amount, detail) = match event {
+            GameplayEvent::JobDelivered(_) | GameplayEvent::JobCancelled { .. } => return None,
+            GameplayEvent::Fined { amount, offence } => {
+                (ExpenseKind::Fine, *amount, offence.clone())
+            }
+            GameplayEvent::Tollgate { amount } => (ExpenseKind::Toll, *amount, None),
+            GameplayEvent::Ferry {
+                amount,
+                source,
+                target,
+            } => (ExpenseKind::Ferry, *amount, trip(source, target)),
+            GameplayEvent::Train {
+                amount,
+                source,
+                target,
+            } => (ExpenseKind::Train, *amount, trip(source, target)),
+        };
+        Some(Self {
+            kind,
+            amount,
+            detail,
+            at,
+            truck_make: truck.make.clone(),
+            truck_model: truck.model.clone(),
+        })
+    }
 }
 
 impl JobInProgress {
@@ -171,12 +235,18 @@ pub enum Event {
         job: JobInProgress,
         end_odometer_km: f32,
         ended_at: NaiveDateTime,
+        /// The game's own figures, when its "delivered" event ended the job (#4756).
+        report: Option<DeliveryReport>,
     },
     JobCancelled {
         job: JobInProgress,
         end_odometer_km: f32,
         ended_at: NaiveDateTime,
+        /// What the game charged, when its "cancelled" event ended the job (#4756).
+        penalty: Option<i64>,
     },
+    /// A toll, fine or fare paid with no job running (on a job it goes on the job instead).
+    Expense(Expense),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -306,6 +376,10 @@ impl StateMachine {
             paused: s.paused,
         });
 
+        for event in &s.events {
+            self.on_gameplay_event(at, s, event, &mut events);
+        }
+
         if s.paused {
             // Pausing is not idling, and nothing changes in the world meanwhile.
             self.idle_since = None;
@@ -382,6 +456,54 @@ impl StateMachine {
             }
         }
         events
+    }
+
+    /// A gameplay event from the plugin (#4756). The job events end the tracked job with the
+    /// game's outcome, even while paused (the results screen pauses the game). A job restored from
+    /// the last run that the game hasn't confirmed yet is left to the frame rules.
+    fn on_gameplay_event(
+        &mut self,
+        at: NaiveDateTime,
+        s: &TelemetrySnapshot,
+        event: &GameplayEvent,
+        events: &mut Vec<Event>,
+    ) {
+        let outcome = match event {
+            GameplayEvent::JobDelivered(report) => {
+                Some((SessionStatus::Completed, Some(report.clone()), None))
+            }
+            GameplayEvent::JobCancelled { penalty } => {
+                Some((SessionStatus::Cancelled, None, Some(*penalty)))
+            }
+            _ => None,
+        };
+        let Some((status, report, penalty)) = outcome else {
+            if let Some(expense) = Expense::from_event(event, at, &s.truck) {
+                match self.job.as_mut().filter(|_| !self.restored) {
+                    Some(job) => job.expenses.push(expense),
+                    None => events.push(Event::Expense(expense)),
+                }
+            }
+            return;
+        };
+        if self.restored {
+            return;
+        }
+        let Some(job) = self.job.clone() else {
+            return;
+        };
+        let odometer_km = s.truck.odometer_km;
+        let job_event = self.close_job(at, odometer_km, status, report, penalty);
+        // A frame copied while the plugin was still writing can show the job a moment longer:
+        // don't start it again.
+        self.delivered = Some(job.job);
+        if self.state() == DrivingState::Delivery {
+            self.end_session(at, odometer_km, status, events);
+            events.extend(job_event);
+            self.begin_free_roam(at, s, events);
+        } else {
+            events.extend(job_event);
+        }
     }
 
     /// The job in this sample, leaving out one that was already delivered and is still in the frame.
@@ -480,6 +602,7 @@ impl StateMachine {
                 started_at: at,
                 started_game_time: s.game_time,
                 wear: JobWear::default(),
+                expenses: Vec::new(),
             };
             events.push(Event::JobStarted {
                 job: started.clone(),
@@ -551,25 +674,39 @@ impl StateMachine {
         odometer_km: f32,
         paused_before: bool,
     ) -> (SessionStatus, Option<Event>) {
-        let Some(job) = self.job.take() else {
+        let Some(job) = self.job.as_ref() else {
             return (SessionStatus::Completed, None);
         };
-        let status = self.job_outcome(&job, odometer_km, paused_before);
+        let status = self.job_outcome(job, odometer_km, paused_before);
+        (status, self.close_job(at, odometer_km, status, None, None))
+    }
+
+    /// End the tracked job as `status`, with the game's figures when it reported them.
+    fn close_job(
+        &mut self,
+        at: NaiveDateTime,
+        odometer_km: f32,
+        status: SessionStatus,
+        report: Option<DeliveryReport>,
+        penalty: Option<i64>,
+    ) -> Option<Event> {
+        let job = self.job.take()?;
         self.near_destination = false;
         self.cleared_route_samples = 0;
-        let event = match status {
+        Some(match status {
             SessionStatus::Completed => Event::JobCompleted {
                 job,
                 end_odometer_km: odometer_km,
                 ended_at: at,
+                report,
             },
             SessionStatus::Cancelled => Event::JobCancelled {
                 job,
                 end_odometer_km: odometer_km,
                 ended_at: at,
+                penalty,
             },
-        };
-        (status, Some(event))
+        })
     }
 
     /// Delivered or cancelled? See the module docs for why this is a heuristic.
@@ -656,6 +793,7 @@ mod tests {
                 wear_trailer: 0.0,
             },
             job,
+            events: Vec::new(),
         }
     }
 
@@ -723,6 +861,7 @@ mod tests {
                 Event::JobStarted { .. } => "job-started",
                 Event::JobCompleted { .. } => "job-completed",
                 Event::JobCancelled { .. } => "job-cancelled",
+                Event::Expense(_) => "expense",
             })
             .collect()
     }
@@ -989,6 +1128,7 @@ mod tests {
             job,
             end_odometer_km,
             ended_at,
+            report: None,
         } = &ev[1]
         else {
             panic!()
@@ -1595,5 +1735,170 @@ mod tests {
         feed(&mut m, 1, &driving(11.0));
         feed(&mut m, 2, &parked(11.0));
         assert_eq!(names(&feed(&mut m, 32, &parked(11.0))), ["end:free"]);
+    }
+
+    // --- Gameplay events (#4756) ---
+
+    fn with(mut s: TelemetrySnapshot, events: Vec<GameplayEvent>) -> TelemetrySnapshot {
+        s.events = events;
+        s
+    }
+
+    fn delivered(revenue: i64) -> GameplayEvent {
+        GameplayEvent::JobDelivered(DeliveryReport {
+            revenue,
+            earned_xp: 300,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn the_games_delivered_event_ends_the_job_while_paused() {
+        let mut m = on_a_job();
+        feed(&mut m, 120, &hauling(200.0));
+        // The results screen: paused, the job gone from the frame, the event in it.
+        let mut results = with(parked(200.1), vec![delivered(3_900)]);
+        results.paused = true;
+        let ev = feed(&mut m, 121, &results);
+        assert_eq!(
+            names(&ev),
+            ["end:job", "job-completed", "start:free"],
+            "{ev:#?}"
+        );
+        let Event::JobCompleted {
+            report: Some(report),
+            end_odometer_km,
+            ..
+        } = &ev[1]
+        else {
+            panic!("{ev:#?}")
+        };
+        assert_eq!(report.revenue, 3_900);
+        assert_eq!(*end_odometer_km, 200.1);
+        assert_eq!(m.active_job(), None);
+        // Leaving the results screen changes nothing more.
+        assert!(feed(&mut m, 200, &parked(200.1)).is_empty());
+        assert!(names(&feed(&mut m, 201, &driving(200.5))).is_empty());
+    }
+
+    /// The game's word wins over the rules: paused just before the job vanished would read as a
+    /// cancel, and a few km from pickup is "dropped right after pickup".
+    #[test]
+    fn the_games_events_beat_the_guesses() {
+        let mut m = on_a_job();
+        let mut paused = hauling(121.0);
+        paused.paused = true;
+        feed(&mut m, 120, &paused);
+        let ev = feed(&mut m, 121, &with(driving(121.0), vec![delivered(10)]));
+        assert_eq!(names(&ev), ["end:job", "job-completed", "start:free"]);
+
+        let mut m = on_a_job();
+        feed(&mut m, 120, &hauling(300.0));
+        let ev = feed(
+            &mut m,
+            121,
+            &with(
+                driving(300.5),
+                vec![GameplayEvent::JobCancelled { penalty: 2_000 }],
+            ),
+        );
+        assert_eq!(names(&ev), ["end:job", "job-cancelled", "start:free"]);
+        assert!(matches!(
+            ev[1],
+            Event::JobCancelled {
+                penalty: Some(2_000),
+                ..
+            }
+        ));
+        assert_eq!(ended(&ev)[0].1, SessionStatus::Cancelled);
+    }
+
+    /// A frame copied while the plugin was mid-write can still show the job after the event.
+    #[test]
+    fn the_delivered_job_left_in_a_frame_is_not_started_again() {
+        let mut m = on_a_job();
+        feed(&mut m, 120, &with(hauling(200.0), vec![delivered(4_000)]));
+        assert!(names(&feed(&mut m, 121, &hauling(200.5))).is_empty());
+        assert_eq!(m.state(), DrivingState::FreeRoam);
+        assert_eq!(m.active_job(), None);
+    }
+
+    #[test]
+    fn a_job_finished_while_parked_on_the_event_has_no_session_to_end() {
+        let mut m = on_a_job();
+        feed(&mut m, 120, &parked_hauling(150.0));
+        feed(&mut m, 130, &parked_hauling(150.0));
+        feed(&mut m, 500, &parked_hauling(150.0)); // parked 5+ minutes: the session ended
+        assert_eq!(m.state(), DrivingState::NotDriving);
+        let ev = feed(&mut m, 501, &with(parked(150.0), vec![delivered(1)]));
+        assert_eq!(names(&ev), ["job-completed"]);
+    }
+
+    #[test]
+    fn an_event_with_no_job_tracked_does_nothing() {
+        let mut m = machine();
+        feed(&mut m, 0, &driving(10.0));
+        feed(&mut m, 1, &driving(10.5));
+        let ev = feed(&mut m, 2, &with(driving(11.0), vec![delivered(1)]));
+        assert!(ev.is_empty(), "{ev:#?}");
+    }
+
+    /// A job restored from the last run is only trusted once the game shows it (#4730).
+    #[test]
+    fn an_event_does_not_finish_an_unconfirmed_restored_job() {
+        let m = on_a_job();
+        let saved = m.active_job().cloned();
+        let mut m = machine();
+        m.restore(saved, None);
+        let mut results = with(parked(500.0), vec![delivered(1)]);
+        results.paused = true;
+        assert!(feed(&mut m, 0, &results).is_empty());
+    }
+
+    #[test]
+    fn costs_go_on_the_running_job_or_out_on_their_own() {
+        let mut m = machine();
+        feed(&mut m, 0, &driving(10.0));
+        feed(&mut m, 1, &driving(10.5));
+        let ev = feed(
+            &mut m,
+            1,
+            &with(driving(11.0), vec![GameplayEvent::Tollgate { amount: 19 }]),
+        );
+        let [Event::Expense(e)] = &ev[..] else {
+            panic!("{ev:#?}")
+        };
+        assert_eq!((e.kind, e.amount, e.at), (ExpenseKind::Toll, 19, t(1)));
+
+        let mut m = on_a_job();
+        let ev = feed(
+            &mut m,
+            120,
+            &with(
+                hauling(150.0),
+                vec![
+                    GameplayEvent::Fined {
+                        amount: 250,
+                        offence: Some("red_signal".into()),
+                    },
+                    GameplayEvent::Ferry {
+                        amount: 900,
+                        source: Some("Calais".into()),
+                        target: Some("Dover".into()),
+                    },
+                ],
+            ),
+        );
+        assert!(ev.is_empty(), "{ev:#?}");
+        let costs = &m.active_job().unwrap().expenses;
+        assert_eq!(costs.len(), 2);
+        assert_eq!(costs[0].detail.as_deref(), Some("red_signal"));
+        assert_eq!(costs[1].kind, ExpenseKind::Ferry);
+        assert_eq!(costs[1].detail.as_deref(), Some("Calais → Dover"));
+        let ev = feed(&mut m, 121, &with(driving(151.0), vec![delivered(4_000)]));
+        let Event::JobCompleted { job, .. } = &ev[1] else {
+            panic!("{ev:#?}")
+        };
+        assert_eq!(job.expenses.len(), 2);
     }
 }

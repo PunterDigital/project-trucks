@@ -15,6 +15,7 @@ import type {
   HubStatus,
   JobHubState,
   Job,
+  JobExpense,
   JobFilter,
   JobPatch,
   JobsPage,
@@ -106,6 +107,10 @@ export const api = {
     invoke<JobsPage>("list_jobs", { filter: filter ?? null }),
 
   getJob: (id: string) => invoke<Job | null>("get_job", { id }),
+
+  /** Tolls, fines and fares paid on a job, oldest first (#4756). */
+  getJobExpenses: (jobId: string) =>
+    invoke<JobExpense[]>("get_job_expenses", { jobId }),
 
   updateJob: (id: string, patch: JobPatch) =>
     invoke<Job | null>("update_job", { id, patch }),

@@ -15,6 +15,7 @@ pub mod struct_scs;
 pub mod struct_v;
 
 pub use reader::{Plugin, ReaderError, TelemetryReader};
+pub use state_machine::{Expense, ExpenseKind};
 pub use struct_v::{FrameError, TelemetryFrame};
 
 use chrono::NaiveDateTime;
@@ -33,6 +34,60 @@ pub struct TelemetrySnapshot {
     pub game_version: (u32, u32),
     pub truck: TruckSnapshot,
     pub job: Option<JobSnapshot>,
+    /// Gameplay events the game reported since the previous frame (#4756): RenCloud's plugin only.
+    /// Older replay fixtures don't have them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<GameplayEvent>,
+}
+
+/// One of the game's gameplay events, as RenCloud's scs-telemetry passes it on (#4756). The plugin
+/// flips a flag per event and fills the event's values in the same frame.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum GameplayEvent {
+    /// The job was handed in (the results screen is up).
+    JobDelivered(DeliveryReport),
+    /// The job was cancelled; `penalty` is what the game charged for it.
+    JobCancelled {
+        penalty: i64,
+    },
+    /// `offence` is the game's id (`speeding_camera`, `red_signal`, ...).
+    Fined {
+        amount: i64,
+        offence: Option<String>,
+    },
+    Tollgate {
+        amount: i64,
+    },
+    Ferry {
+        amount: i64,
+        source: Option<String>,
+        target: Option<String>,
+    },
+    Train {
+        amount: i64,
+        source: Option<String>,
+        target: Option<String>,
+    },
+}
+
+/// What the game says about a delivery at the moment it is handed in.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeliveryReport {
+    /// What the game paid, which can differ from the job's offered income.
+    pub revenue: i64,
+    pub earned_xp: i32,
+    /// Cargo damage, 0.0 to 1.0.
+    pub cargo_damage: f32,
+    /// The job's distance as the game counts it.
+    pub distance_km: f32,
+    pub auto_park: bool,
+    pub auto_load: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

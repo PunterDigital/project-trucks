@@ -37,6 +37,11 @@ const TELEMETRY_LABELS: Record<TelemetryStatus, string> = {
   delivery: "On a delivery",
 };
 
+/** Tolls, fines, fares and cancel penalties the game charged (#4756), under the income. */
+function costsLine(costs: number): string {
+  return `${formatCurrency(costs)} in tolls, fines and fares`;
+}
+
 function onTimePct(p: PeriodStats): number | null {
   const total = p.onTime + p.late;
   return total === 0 ? null : Math.round((p.onTime / total) * 100);
@@ -163,7 +168,11 @@ function DashboardBody({
             sub={`${formatKm(lifetime.deliveryKm)} delivery · ${formatKm(lifetime.freeRoamKm)} free roam`}
           />
           <StatCard label="Deliveries" value={plain.format(lifetime.deliveries)} />
-          <StatCard label="Income" value={formatCurrency(lifetime.income)} />
+          <StatCard
+            label="Income"
+            value={formatCurrency(lifetime.income)}
+            sub={costsLine(lifetime.costs)}
+          />
           <StatCard
             label="On time"
             value={formatPct(onTimePct(lifetime))}
@@ -191,6 +200,7 @@ function DashboardBody({
           <StatCard
             label="Income"
             value={formatCurrency(thisMonth.income)}
+            sub={costsLine(thisMonth.costs)}
             delta={delta(thisMonth.income, lastMonth.income, formatCurrency)}
           />
           <StatCard

@@ -5,17 +5,23 @@
 //! recomputed once that commits. A cancelled delivery is written the same way, with a job row of
 //! status `CANCELLED` (#2513: a cancel has to show up in Jobs); the stats count only delivered and
 //! late jobs as deliveries and income, and the kilometres stay in the session.
+//!
+//! Gameplay events (#4756): a finished job also gets the game's own figures (revenue, XP, ...,
+//! or the cancel penalty) and its tolls, fines and fares in the same transaction; a cost paid with
+//! no job running is written straight away.
 
 use anyhow::{Context, Result};
 use chrono::NaiveDateTime;
 use sqlx::SqlitePool;
 
 use super::state_machine::{Config, DrivingState, Event, JobInProgress, StateMachine};
-use super::{JobSnapshot, TelemetrySnapshot};
+use super::{DeliveryReport, JobSnapshot, TelemetrySnapshot};
+use crate::commands::expenses::{insert_expense_row, set_game_result};
 use crate::commands::jobs::insert_job_row;
 use crate::commands::sessions::insert_session_row;
 use crate::db::models::{
-    DrivingSession, Job, JobSource, JobStatus, NewJob, NewSession, SessionKind, SessionStatus,
+    DrivingSession, GameResult, Job, JobExpense, JobSource, JobStatus, NewJob, NewSession,
+    SessionKind, SessionStatus,
 };
 use crate::db::rollups::recompute_truck;
 
@@ -36,6 +42,8 @@ type Saved = (Option<JobInProgress>, Option<JobSnapshot>);
 pub enum Created {
     Session(DrivingSession),
     Job(Box<Job>),
+    /// A cost paid with no job running (a job's own costs are written with the job).
+    Expense(JobExpense),
 }
 
 pub struct Pipeline {
@@ -58,8 +66,26 @@ impl Default for Pipeline {
     }
 }
 
-/// A finished job: what was hauled, the odometer and time it ended, and whether it was cancelled.
-type FinishedJob = (JobInProgress, f32, NaiveDateTime, bool);
+/// A finished job: what was hauled, the odometer and time it ended, whether it was cancelled,
+/// and what the game reported about it.
+type FinishedJob = (JobInProgress, f32, NaiveDateTime, bool, GameResult);
+
+/// The game's figures for a job that its "delivered" or "cancelled" event ended.
+fn game_result(report: Option<DeliveryReport>, penalty: Option<i64>) -> GameResult {
+    let mut game = GameResult {
+        cancel_penalty: penalty,
+        ..Default::default()
+    };
+    if let Some(r) = report {
+        game.game_revenue = Some(r.revenue);
+        game.earned_xp = Some(i64::from(r.earned_xp));
+        game.cargo_damage = Some((f64::from(r.cargo_damage) * 1000.0).round() / 1000.0);
+        game.game_distance_km = Some((f64::from(r.distance_km) * 10.0).round() / 10.0);
+        game.auto_park = Some(r.auto_park);
+        game.auto_load = Some(r.auto_load);
+    }
+    game
+}
 
 impl Pipeline {
     pub fn new(cfg: Config) -> Self {
@@ -205,12 +231,26 @@ impl Pipeline {
                                 job,
                                 end_odometer_km,
                                 ended_at,
-                            }) => Some((job, end_odometer_km, ended_at, false)),
+                                report,
+                            }) => Some((
+                                job,
+                                end_odometer_km,
+                                ended_at,
+                                false,
+                                game_result(report, None),
+                            )),
                             Some(Event::JobCancelled {
                                 job,
                                 end_odometer_km,
                                 ended_at,
-                            }) => Some((job, end_odometer_km, ended_at, true)),
+                                penalty,
+                            }) => Some((
+                                job,
+                                end_odometer_km,
+                                ended_at,
+                                true,
+                                game_result(None, penalty),
+                            )),
                             _ => None,
                         },
                         _ => None,
@@ -222,12 +262,14 @@ impl Pipeline {
                     job,
                     end_odometer_km,
                     ended_at,
+                    report,
                 } => {
                     // Finished while parked: the session ended earlier.
+                    let game = game_result(report, None);
                     self.write(
                         pool,
                         None,
-                        Some((job, end_odometer_km, ended_at, false)),
+                        Some((job, end_odometer_km, ended_at, false, game)),
                         game_time,
                         &mut created,
                     )
@@ -237,16 +279,23 @@ impl Pipeline {
                     job,
                     end_odometer_km,
                     ended_at,
+                    penalty,
                 } => {
                     // Cancelled while parked: the session ended earlier.
+                    let game = game_result(None, penalty);
                     self.write(
                         pool,
                         None,
-                        Some((job, end_odometer_km, ended_at, true)),
+                        Some((job, end_odometer_km, ended_at, true, game)),
                         game_time,
                         &mut created,
                     )
                     .await?;
+                }
+                Event::Expense(expense) => {
+                    let mut conn = pool.acquire().await.context("acquiring connection")?;
+                    let row = insert_expense_row(&mut conn, None, &expense).await?;
+                    created.push(Created::Expense(row));
                 }
             }
         }
@@ -275,7 +324,7 @@ impl Pipeline {
             _ => None,
         };
         let job_row = match job {
-            Some((j, end_odometer_km, ended_at, cancelled)) => {
+            Some((j, end_odometer_km, ended_at, cancelled, game)) => {
                 let session_id = session_row
                     .as_ref()
                     .map(|s| s.id.clone())
@@ -289,7 +338,15 @@ impl Pipeline {
                     cancelled,
                 );
                 trucks.push((new_job.truck_make.clone(), new_job.truck_model.clone()));
-                Some(insert_job_row(&mut tx, new_job).await?)
+                let mut row = insert_job_row(&mut tx, new_job).await?;
+                if game != GameResult::default() {
+                    set_game_result(&mut tx, &row.id, &game).await?;
+                    row.game = game;
+                }
+                for expense in &j.expenses {
+                    insert_expense_row(&mut tx, Some(&row.id), expense).await?;
+                }
+                Some(row)
             }
             None => None,
         };
@@ -468,6 +525,7 @@ mod tests {
                 wear_trailer: 0.0,
             },
             job,
+            events: Vec::new(),
         }
     }
 
@@ -487,7 +545,7 @@ mod tests {
             .iter()
             .filter_map(|c| match c {
                 Created::Session(s) => Some(s),
-                Created::Job(_) => None,
+                _ => None,
             })
             .collect()
     }
@@ -497,7 +555,7 @@ mod tests {
             .iter()
             .filter_map(|c| match c {
                 Created::Job(j) => Some(j.as_ref()),
-                Created::Session(_) => None,
+                _ => None,
             })
             .collect()
     }
@@ -867,7 +925,9 @@ mod tests {
 
     /// #4771: the delivery Shay drove on Nov 15 (123.8 km on the odometer in ~11 real minutes,
     /// 104 in-game minutes). Per real hour that's ~660 km/h and it was flagged; per in-game
-    /// hour it's ~71 km/h. Fuel and damage come from the frames too.
+    /// hour it's ~71 km/h. Fuel and damage come from the frames too. #4756: the game's
+    /// "delivered" event records it while the results screen is still up, with the game's
+    /// figures and the toll paid on the way.
     #[tokio::test]
     async fn the_recorded_delivery_gets_game_time_speed_fuel_and_damage() {
         let pool = test_pool().await;
@@ -879,16 +939,41 @@ mod tests {
             let at = t((s.t * 1000.0) as i64 / 1000);
             created.extend(p.step(&pool, at, s.snapshot.as_ref()).await.unwrap());
         }
-        // Leave the results screen (see the struct_scs test): the last frame, unpaused.
-        let last = replay.samples.last().unwrap();
-        let mut resumed = last.snapshot.clone().unwrap();
-        resumed.paused = false;
-        let at = t(last.t as i64 + 1);
-        created.extend(p.step(&pool, at, Some(&resumed)).await.unwrap());
+        // The recording ends on the results screen: no unpaused frame needed.
+        assert!(
+            replay
+                .samples
+                .last()
+                .unwrap()
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .paused
+        );
 
         let j = jobs(&created);
         assert_eq!(j.len(), 1);
         let job = j[0];
+        assert_eq!(job.status, JobStatus::Delivered);
+        assert_eq!(job.game.game_revenue, Some(4478));
+        assert_eq!(job.game.earned_xp, Some(320));
+        assert_eq!(job.game.game_distance_km, Some(229.0));
+        assert_eq!(job.game.cargo_damage, Some(0.0));
+        assert_eq!(job.game.auto_park, Some(true));
+        assert_eq!(job.game.auto_load, Some(true));
+        assert_eq!(job.game.cancel_penalty, None);
+        let stored = crate::commands::jobs::fetch_job(&pool, &job.id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.game, job.game);
+        let costs = crate::commands::expenses::fetch_job_expenses(&pool, &job.id)
+            .await
+            .unwrap();
+        assert_eq!(costs.len(), 1, "{costs:?}");
+        assert_eq!(costs[0].kind, crate::db::models::ExpenseKind::Toll);
+        assert_eq!(costs[0].amount, 19);
+        assert!(p.active_job().is_none());
         assert!((job.distance_km - 123.8).abs() < 0.2, "{}", job.distance_km);
         let game_min = job.game_duration_min.expect("game time recorded");
         assert!((100..=106).contains(&game_min), "{game_min} game minutes");
@@ -902,6 +987,181 @@ mod tests {
         assert!(fuel > 10.0 && fuel < 100.0, "{fuel} L");
         let damage = job.damage_delta.expect("damage counted");
         assert!((0.0..=1.0).contains(&damage), "{damage}");
+    }
+
+    fn with_events(
+        mut s: TelemetrySnapshot,
+        events: Vec<crate::telemetry::GameplayEvent>,
+    ) -> TelemetrySnapshot {
+        s.events = events;
+        s
+    }
+
+    /// #4756: the game's events end the job (paused, on the results screen) and carry its
+    /// figures; a toll on the way is stored with the job, one in free roam on its own.
+    #[tokio::test]
+    async fn gameplay_events_write_the_game_figures_and_costs() {
+        use crate::telemetry::{DeliveryReport, GameplayEvent};
+        let pool = test_pool().await;
+        let mut p = Pipeline::default();
+        let mut paused = snap(150.0, 0.0, None);
+        paused.paused = true;
+        let created = feed(
+            &mut p,
+            &pool,
+            vec![
+                (0, Some(snap(100.0, 0.0, None))),
+                (
+                    1,
+                    Some(with_events(
+                        snap(101.0, 60.0, None),
+                        vec![GameplayEvent::Tollgate { amount: 7 }],
+                    )),
+                ),
+                (2, Some(snap(102.0, 60.0, Some(job())))),
+                (
+                    3,
+                    Some(with_events(
+                        snap(120.0, 60.0, Some(job())),
+                        vec![GameplayEvent::Fined {
+                            amount: 300,
+                            offence: Some("speeding_camera".into()),
+                        }],
+                    )),
+                ),
+                (4, Some(snap(150.0, 60.0, Some(job())))),
+                (
+                    5,
+                    Some(with_events(
+                        paused,
+                        vec![GameplayEvent::JobDelivered(DeliveryReport {
+                            revenue: 4_000,
+                            earned_xp: 250,
+                            cargo_damage: 0.0123,
+                            distance_km: 48.04,
+                            auto_park: false,
+                            auto_load: true,
+                        })],
+                    )),
+                ),
+            ],
+        )
+        .await;
+        let free: Vec<_> = created
+            .iter()
+            .filter_map(|c| match c {
+                Created::Expense(e) => Some(e),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(free.len(), 1);
+        assert_eq!(free[0].amount, 7);
+        assert_eq!(free[0].job_id, None);
+
+        let j = jobs(&created);
+        assert_eq!(j.len(), 1, "recorded while paused");
+        let job = j[0];
+        assert_eq!(job.status, JobStatus::Delivered);
+        assert_eq!(job.game.game_revenue, Some(4_000));
+        assert_eq!(job.game.earned_xp, Some(250));
+        assert_eq!(job.game.cargo_damage, Some(0.012));
+        assert_eq!(job.game.game_distance_km, Some(48.0));
+        assert_eq!(job.game.auto_park, Some(false));
+        assert_eq!(job.game.auto_load, Some(true));
+        let costs = crate::commands::expenses::fetch_job_expenses(&pool, &job.id)
+            .await
+            .unwrap();
+        assert_eq!(costs.len(), 1);
+        assert_eq!(costs[0].kind, crate::db::models::ExpenseKind::Fine);
+        assert_eq!(costs[0].detail.as_deref(), Some("speeding_camera"));
+
+        // Deleting the job deletes its costs, not the free-roam one.
+        crate::commands::jobs::remove_job(&pool, &job.id)
+            .await
+            .unwrap();
+        let (left,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM expenses")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 1);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_event_keeps_the_penalty() {
+        use crate::telemetry::GameplayEvent;
+        let pool = test_pool().await;
+        let mut p = Pipeline::default();
+        let created = feed(
+            &mut p,
+            &pool,
+            vec![
+                (0, Some(snap(100.0, 0.0, None))),
+                (1, Some(snap(101.0, 60.0, Some(job())))),
+                (2, Some(snap(130.0, 60.0, Some(job())))),
+                (
+                    3,
+                    Some(with_events(
+                        snap(131.0, 60.0, None),
+                        vec![GameplayEvent::JobCancelled { penalty: 1_250 }],
+                    )),
+                ),
+            ],
+        )
+        .await;
+        let j = jobs(&created);
+        assert_eq!(j.len(), 1);
+        assert_eq!(j[0].status, JobStatus::Cancelled);
+        assert_eq!(j[0].game.cancel_penalty, Some(1_250));
+        assert_eq!(j[0].game.game_revenue, None);
+    }
+
+    /// A toll paid on the job is saved with the job in progress, so a restart keeps it.
+    #[tokio::test]
+    async fn a_jobs_costs_survive_a_restart() {
+        use crate::telemetry::GameplayEvent;
+        let pool = test_pool().await;
+        let mut p = Pipeline::default();
+        feed(
+            &mut p,
+            &pool,
+            vec![
+                (0, Some(snap(100.0, 0.0, None))),
+                (1, Some(snap(101.0, 60.0, Some(job())))),
+                (
+                    2,
+                    Some(with_events(
+                        snap(110.0, 60.0, Some(job())),
+                        vec![GameplayEvent::Tollgate { amount: 12 }],
+                    )),
+                ),
+            ],
+        )
+        .await;
+        drop(p);
+        let mut p = Pipeline::restored(&pool).await;
+        assert_eq!(p.active_job().unwrap().expenses.len(), 1);
+        let created = feed(
+            &mut p,
+            &pool,
+            vec![
+                (100, Some(snap(111.0, 60.0, Some(job())))),
+                (
+                    101,
+                    Some(with_events(
+                        snap(160.0, 60.0, None),
+                        vec![GameplayEvent::JobDelivered(Default::default())],
+                    )),
+                ),
+            ],
+        )
+        .await;
+        let j = jobs(&created);
+        assert_eq!(j.len(), 1);
+        let costs = crate::commands::expenses::fetch_job_expenses(&pool, &j[0].id)
+            .await
+            .unwrap();
+        assert_eq!(costs.len(), 1);
+        assert_eq!(costs[0].amount, 12);
     }
 
     #[test]

@@ -128,6 +128,7 @@ pub async fn insert_job_row(conn: &mut SqliteConnection, input: NewJob) -> Resul
         flagged,
         flag_reason,
         notes: input.notes,
+        game: Default::default(),
     })
 }
 

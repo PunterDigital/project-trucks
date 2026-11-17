@@ -34,7 +34,7 @@ import {
   formatDuration,
   formatKm,
 } from "@/lib/format";
-import type { Job } from "@/types";
+import type { ExpenseKind, Job, JobExpense } from "@/types";
 
 type Status = "idle" | "pending" | "saving" | "saved" | "error";
 type LoadState =
@@ -252,7 +252,15 @@ export function JobDetail() {
               : `${job.avgSpeedKmh.toFixed(1)} km/h`
           }
         />
-        <Stat label="Income" value={formatCurrency(job.declaredIncome)} />
+        <Stat
+          label="Income"
+          value={formatCurrency(job.gameRevenue ?? job.declaredIncome)}
+          sub={
+            job.gameRevenue != null && job.gameRevenue !== job.declaredIncome
+              ? `Offered ${formatCurrency(job.declaredIncome)}`
+              : undefined
+          }
+        />
       </div>
 
       <Separator />
@@ -284,6 +292,10 @@ export function JobDetail() {
           }
         />
       </Section>
+
+      <GameResultSection job={job} />
+
+      <JobCostsSection job={job} />
 
       <Section title="Diagnostic">
         <Row
@@ -366,13 +378,22 @@ function BackLink() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+function Stat({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub?: string;
+}) {
   return (
-    <div className="space-y-1">
+    <div className="space-y-1" data-testid="job-stat" data-label={label}>
       <div className="text-muted-foreground text-xs uppercase tracking-wide">
         {label}
       </div>
       <div className="text-xl font-semibold tabular-nums">{value}</div>
+      {sub && <div className="text-muted-foreground text-xs">{sub}</div>}
     </div>
   );
 }
@@ -424,6 +445,95 @@ function SaveIndicator({ status }: { status: Status }) {
   if (status === "saved")
     return <span className="text-xs text-emerald-600 dark:text-emerald-400">Saved</span>;
   return <span className="text-destructive text-xs">Save failed</span>;
+}
+
+/** What the game reported when the job ended (#4756); hidden when it reported nothing. */
+function GameResultSection({ job }: { job: Job }) {
+  const yesNo = (v: boolean | null) => (v == null ? "—" : v ? "Yes" : "No");
+  if (job.gameRevenue == null && job.cancelPenalty == null) return null;
+  return (
+    <Section title="Reported by the game">
+      <div data-testid="game-result" className="space-y-2">
+        {job.cancelPenalty != null && (
+          <Row label="Cancel penalty" value={formatCurrency(job.cancelPenalty)} />
+        )}
+        {job.gameRevenue != null && (
+          <>
+            <Row label="Revenue" value={formatCurrency(job.gameRevenue)} />
+            <Row label="XP earned" value={job.earnedXp?.toLocaleString() ?? "—"} />
+            <Row
+              label="Cargo damage"
+              value={
+                job.cargoDamage != null ? `${(job.cargoDamage * 100).toFixed(1)}%` : "—"
+              }
+            />
+            <Row
+              label="Job distance"
+              value={job.gameDistanceKm != null ? formatKm(job.gameDistanceKm) : "—"}
+            />
+            <Row label="Auto-park" value={yesNo(job.autoPark)} />
+            <Row label="Auto-load" value={yesNo(job.autoLoad)} />
+          </>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+const EXPENSE_LABEL: Record<ExpenseKind, string> = {
+  TOLL: "Toll",
+  FINE: "Fine",
+  FERRY: "Ferry",
+  TRAIN: "Train",
+};
+
+/** "red_signal" -> "Red signal". */
+function offence(id: string): string {
+  const text = id.replace(/_/g, " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Tolls, fines and fares paid on the job (#4756). Recorded jobs only. */
+function JobCostsSection({ job }: { job: Job }) {
+  const [costs, setCosts] = useState<{ jobId: string; rows: JobExpense[] } | null>(null);
+  useEffect(() => {
+    if (job.source !== "TELEMETRY") return;
+    let live = true;
+    api
+      .getJobExpenses(job.id)
+      .then((rows) => {
+        if (live) setCosts({ jobId: job.id, rows });
+      })
+      .catch(() => {
+        if (live) setCosts({ jobId: job.id, rows: [] });
+      });
+    return () => {
+      live = false;
+    };
+  }, [job.id, job.source]);
+  const rows = costs?.jobId === job.id ? costs.rows : [];
+  if (rows.length === 0) return null;
+  const total = rows.reduce((sum, r) => sum + r.amount, 0);
+  return (
+    <Section title="Costs" right={<span className="text-sm">{formatCurrency(total)}</span>}>
+      <div data-testid="job-costs" className="space-y-2">
+        {rows.map((r) => (
+          <Row
+            key={r.id}
+            label={EXPENSE_LABEL[r.kind]}
+            value={
+              <span className="flex flex-wrap justify-between gap-x-3">
+                <span className="text-muted-foreground">
+                  {r.detail ? (r.kind === "FINE" ? offence(r.detail) : r.detail) : "—"}
+                </span>
+                <span>{formatCurrency(r.amount)}</span>
+              </span>
+            }
+          />
+        ))}
+      </div>
+    </Section>
+  );
 }
 
 /** "ProjectTrucks Hub" on the job page, only while linked (#4654). */

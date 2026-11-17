@@ -442,6 +442,7 @@ mod tests {
             flagged: false,
             flag_reason: None,
             notes: Some("private".into()),
+            game: Default::default(),
         }
     }
 

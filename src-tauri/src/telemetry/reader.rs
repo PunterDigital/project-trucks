@@ -16,7 +16,7 @@
 
 use std::time::Duration;
 
-use super::struct_scs::{self, ScsFrame, ScsFrameError};
+use super::struct_scs::{self, EventTracker, ScsFrame, ScsFrameError};
 use super::struct_v::{self, FrameError};
 use super::TelemetrySnapshot;
 
@@ -74,6 +74,9 @@ pub enum ReaderError {
 pub struct TelemetryReader {
     mapping: platform::Mapping,
     plugin: Plugin,
+    /// scs-telemetry's gameplay-event flags of the previous frame (#4756). A new reader starts a
+    /// new baseline, so a reconnect never replays old events.
+    events: std::sync::Mutex<EventTracker>,
 }
 
 impl TelemetryReader {
@@ -104,7 +107,13 @@ impl TelemetryReader {
         loop {
             for &(name, plugin) in candidates {
                 match platform::Mapping::open(name, plugin.mapping_size()) {
-                    Ok(mapping) => return Ok(Self { mapping, plugin }),
+                    Ok(mapping) => {
+                        return Ok(Self {
+                            mapping,
+                            plugin,
+                            events: Default::default(),
+                        })
+                    }
                     // Only "it isn't there yet" is worth waiting for.
                     Err(ReaderError::NotConnected) => {}
                     Err(e) => return Err(e),
@@ -127,7 +136,16 @@ impl TelemetryReader {
     pub fn read(&self) -> Result<TelemetrySnapshot, ReaderError> {
         let buf = self.read_raw();
         Ok(match self.plugin {
-            Plugin::Scs => ScsFrame::from_bytes(&buf)?.to_snapshot(),
+            Plugin::Scs => {
+                let frame = ScsFrame::from_bytes(&buf)?;
+                let mut snapshot = frame.to_snapshot();
+                snapshot.events = self
+                    .events
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .events(&frame);
+                snapshot
+            }
             Plugin::Funbit => super::TelemetryFrame::from_bytes(&buf)?.to_snapshot(),
         })
     }
