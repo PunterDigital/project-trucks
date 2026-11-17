@@ -73,21 +73,26 @@ jobs:
           workspaces: src-tauri
       - run: pnpm install --frozen-lockfile
 
-      # Tauri's build script needs the frontend dist folder to exist.
-      - name: Build frontend
-        run: pnpm build
       - name: cargo fmt
         working-directory: src-tauri
         run: cargo fmt --check
+
+      # Compiles the app crate once for both the installers and the Rust tests (#4794).
+      # `tauri build` runs `pnpm build` itself (beforeBuildCommand), which also gives
+      # clippy the frontend dist folder Tauri's build script needs.
+      - name: Build installers
+        run: pnpm tauri build
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --all-targets -- -D warnings
+      # Same profile and features as `tauri build` (`cargo build --release --features
+      # tauri/custom-protocol`), so cargo reuses the release lib and only compiles the test
+      # harnesses. Keep it after the installers: rebuilding the frontend (new dist mtimes)
+      # or a `tauri build --config` (sets TAURI_CONFIG) in between recompiles the crate.
       - name: cargo test
         working-directory: src-tauri
-        run: cargo test
+        run: cargo test --release --features tauri/custom-protocol
 
-      - name: Build installers
-        run: pnpm tauri build
       - name: Check the app icon on the exe and the NSIS installer
         shell: pwsh
         run: ./scripts/check-win-icon.ps1 src-tauri/target/release/projecttrucks.exe (Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe).FullName

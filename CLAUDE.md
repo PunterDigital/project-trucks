@@ -65,6 +65,11 @@ cancel, capture stays off/waiting, a dismissed prompt stays away); everything el
   `tauri.conf.json`, `Cargo.toml`, the app's own `Cargo.lock` entry and `CHANGELOG.md` change, the Windows job is
   skipped (Shay, Nov 14: release bumps shouldn't burn a full Windows run; the tag's `release.yml` builds anyway).
   Keep release PRs to exactly those edits, or they get the full run.
+  The Windows job compiles the app crate once (#4794): `pnpm tauri build` first (it builds the frontend too), then
+  clippy, then `cargo test --release --features tauri/custom-protocol`, which matches the `cargo build --release
+  --features tauri/custom-protocol` that `tauri build` runs, so only the test harnesses compile. Anything between
+  the two that rewrites `dist/` (a `pnpm build`) or a `tauri build --config …` (sets `TAURI_CONFIG`, which the build
+  script tracks) makes cargo recompile the whole crate. Check with `CARGO_LOG=cargo::compiler::fingerprint=info`.
 - `release.yml` on `v*` tags: creates the release with generated notes, `tauri-action` (v1) uploads the
   Windows `_x64-setup.exe` / `.msi`, then a job verifies both exist. tauri-action v1 rewrites the name and body
   of an existing release from its inputs, so the first job passes the generated notes on as `releaseBody`.
