@@ -33,6 +33,7 @@ pub fn run() {
             commands::jobs::get_job,
             commands::jobs::update_job,
             commands::jobs::delete_job,
+            commands::expenses::get_job_expenses,
             commands::trucks::list_trucks,
             commands::trucks::get_truck,
             commands::stats::get_dashboard_stats,

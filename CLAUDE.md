@@ -141,21 +141,37 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   (cleared on the game's delivered/cancelled events). Installing also removes our old `ets2-telemetry-server.dll` (only
   if its SHA-256 is the one we shipped, `OLD_DLL_SHA`) and its `.bak`, and the status says Outdated while either is
   there. The DLL has no version resource, so a different `scs-telemetry.dll` is replaced (kept as `.bak`), not
-  compared. Other trackers' DLLs (Shay has `ETSSharedMemoryMapPlugin64v2.dll`) are never touched. The state machine
-  still uses only the frame's job/pause/route fields; RenCloud's gameplay events (`jobDelivered`/`jobCancelled`
-  toggles, revenue, penalty) are not read yet. Checked against the real game on Nov 15 with both plugins loaded at once
+  compared. Other trackers' DLLs (Shay has `ETSSharedMemoryMapPlugin64v2.dll`) are never touched. RenCloud's
+  gameplay events are read since #4756 (next bullet). Checked against the real game on Nov 15 with both plugins loaded at once
   (`PROJECTTRUCKS_LIVE_TELEMETRY=1` or `=funbit` on the `live_game` test, `PROJECTTRUCKS_LIVE_TELEMETRY_DUMP=<file>`
   saves the raw frame): every shared field matched except the truck names (Funbit said make id `scs`, model `STD`;
   RenCloud says `volvo` / `FH4`, so jobs recorded before and after the switch show as two trucks) and the deadline.
   Fixtures: `testdata/scs-rev12-free-roam-frame.bin`, `scs-rev12-job-frame.bin`, and a whole recorded delivery
-  (`scs-recorded-delivery.json`, a replay fixture: 662 frames at 1 Hz thinned to 163 samples that keep every
-  pause/job/trailer edge; `struct_scs::recorded`). In that delivery the game paused on the results screen, `onJob`
-  cleared 3 s later while still paused (0.11 km left), then autopark unhitched the trailer; the state machine records
-  the delivery on the first unpaused frame after the results screen. At delivery the plugin also fills revenue, XP,
-  job distance, cargo damage and autopark/autoload (`gameplay_*` zones), and tolls/fines/ferries arrive as toggles
-  with amounts. The recording was made with a throwaway read-only PowerShell recorder (`MemoryMappedFile.OpenExisting`
+  (`scs-recorded-delivery.json`, a replay fixture: 662 frames at 1 Hz thinned to 180 samples that keep every
+  pause/job/trailer edge and gameplay event; `struct_scs::recorded`). In that delivery the game paused on the results
+  screen, `onJob` cleared 3 s later while still paused (0.11 km left) together with the "delivered" event, then
+  autopark unhitched the trailer; since #4756 the state machine records the delivery on that event frame (before, on
+  the first unpaused frame after the results screen). The recording was made with a throwaway read-only PowerShell recorder (`MemoryMappedFile.OpenExisting`
   with Read rights, one `[i64 ms][7560 B scs][2048 B funbit]` record per second); `recording_to_replay` (opt-in
   test) turns such a file into a replay fixture.
+- Gameplay events (#4756): RenCloud's plugin flips a `special_b` flag with XOR on each game event (`jobDelivered`,
+  `jobCancelled`, `fined`, `tollgate`, `ferry`, `train`; `scs_telemetry.cpp` V.1.12.1) and fills the `gameplay_*` values
+  in the same frame, so any change between two frames is one event. `struct_scs::EventTracker` (inside the reader, so
+  a reconnect starts a new baseline; the first frame is never an event) turns flips into `TelemetrySnapshot.events`
+  (`GameplayEvent`, `#[serde(default)]`, so replay fixtures can carry them too). At delivery the plugin also clears
+  `onJob` **and the job strings and income**, so an event can't name its job: the state machine finishes whatever job
+  it tracks, before the paused early return (the results screen pauses the game), and remembers it as `delivered` in
+  case a torn frame still shows it. A restored job not yet confirmed by an unpaused frame is left to the old rules,
+  which stay as the fallback for Funbit's plugin and missed events. The job row gets the game's figures
+  (`jobs.game_revenue`, `earned_xp`, `cargo_damage`, `game_distance_km`, `auto_park`, `auto_load`,
+  `cancel_penalty`; migration 0006; not synced to the Hub) through `commands::expenses::set_game_result`. Tolls,
+  fines and fares go on `JobInProgress.expenses` (saved with the job, so a restart keeps them) and into `expenses`
+  with the job's id when it's written (`ON DELETE CASCADE`), or straight away with no job id in free roam. Stats:
+  income is `COALESCE(game_revenue, declared_income)`; `PeriodStats.costs` = expenses by `occurred_at` + cancel
+  penalties (Dashboard Income card's second line). CSV: eight columns appended. The recorded-delivery fixture was
+  regenerated from Shay's raw recording with events (toll 19 at 238 s; delivered: revenue 4,478, XP 320, 229 km,
+  auto-park + auto-load). E2E: `e2e/gameplay-events.spec.ts` (ends on the results screen). Hub sync of the figures
+  is a separate card if wanted.
 - No-deadline jobs: an external-market job has delivery time `u32::MAX`. Funbit passes it on as -1, which read as a
   date before the game's clock, so every such delivery was recorded **Late**. Both decoders now read it as no
   deadline (`deadline: None`, never late).

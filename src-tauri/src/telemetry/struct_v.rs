@@ -318,6 +318,8 @@ impl TelemetryFrame {
                 route_distance_km: positive(self.rev4.navigation_distance) / 1000.0,
                 route_time_minutes: positive(self.rev4.navigation_time) / 60.0,
             }),
+            // Funbit's plugin doesn't pass gameplay events on.
+            events: Vec::new(),
         }
     }
 }

@@ -36,10 +36,13 @@ pub struct PeriodStats {
     pub free_roam_km: f64,
     /// Jobs delivered (on time or late). Cancelled jobs are not deliveries.
     pub deliveries: i64,
-    /// Declared income of the deliveries, in game currency.
+    /// Income of the deliveries, in game currency: what the game paid when it reported it
+    /// (#4756), else the job's declared income.
     pub income: i64,
     pub on_time: i64,
     pub late: i64,
+    /// Tolls, fines, ferry/train fares and cancel penalties the game charged (#4756).
+    pub costs: i64,
 }
 
 /// One day of the distance series. `day` is a local `YYYY-MM-DD`.
@@ -207,20 +210,33 @@ async fn scoped_period_stats(
     let mut jobs: QueryBuilder<Sqlite> = QueryBuilder::new(
         "SELECT
            COUNT(CASE WHEN status IN ('DELIVERED', 'LATE') THEN 1 END),
-           COALESCE(SUM(CASE WHEN status IN ('DELIVERED', 'LATE') THEN declared_income ELSE 0 END), 0),
+           COALESCE(SUM(CASE WHEN status IN ('DELIVERED', 'LATE')
+                             THEN COALESCE(game_revenue, declared_income) ELSE 0 END), 0),
            COUNT(CASE WHEN status = 'DELIVERED' THEN 1 END),
            COUNT(CASE WHEN status = 'LATE' THEN 1 END),
            COALESCE(SUM(CASE WHEN source = 'MANUAL' AND session_id IS NULL
-                             THEN distance_km ELSE 0.0 END), 0.0)
+                             THEN distance_km ELSE 0.0 END), 0.0),
+           COALESCE(SUM(cancel_penalty), 0)
          FROM jobs WHERE 1=1",
     );
     push_truck(&mut jobs, truck);
     push_range(&mut jobs, "completed_at", from, to);
-    let (deliveries, income, on_time, late, manual_km): (i64, i64, i64, i64, f64) = jobs
+    let (deliveries, income, on_time, late, manual_km, penalties): (i64, i64, i64, i64, f64, i64) =
+        jobs.build_query_as()
+            .fetch_one(pool)
+            .await
+            .context("summing jobs")?;
+
+    // Costs count when they were paid, so a long job's tolls land in the month of the toll.
+    let mut expenses: QueryBuilder<Sqlite> =
+        QueryBuilder::new("SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE 1=1");
+    push_truck(&mut expenses, truck);
+    push_range(&mut expenses, "occurred_at", from, to);
+    let (paid,): (i64,) = expenses
         .build_query_as()
         .fetch_one(pool)
         .await
-        .context("summing jobs")?;
+        .context("summing costs")?;
 
     let delivery_km = session_delivery_km + manual_km;
     Ok(PeriodStats {
@@ -231,6 +247,7 @@ async fn scoped_period_stats(
         income,
         on_time,
         late,
+        costs: paid + penalties,
     })
 }
 
@@ -520,6 +537,7 @@ mod tests {
                 income: 13_500,
                 on_time: 1,
                 late: 1,
+                costs: 0,
             }
         );
         assert_eq!(stats.this_month, stats.lifetime);
@@ -686,6 +704,7 @@ mod tests {
                 income: 13_500,
                 on_time: 1,
                 late: 1,
+                costs: 0,
             }
         );
         // The Trucks list shows the rollup row: the page must agree with it.
@@ -749,5 +768,71 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stats.last_30_days[29].day, "2026-05-15");
+    }
+
+    /// #4756: income is what the game paid when it said so; costs are the tolls, fines and fares
+    /// (counted in the month they were paid) plus cancel penalties.
+    #[tokio::test]
+    async fn income_uses_the_game_revenue_and_costs_add_up() {
+        use crate::commands::expenses::{insert_expense_row, set_game_result};
+        use crate::db::models::{ExpenseKind, GameResult};
+        use crate::telemetry::Expense;
+        let pool = test_pool().await;
+        let today = now() - Duration::hours(2);
+        let ses = insert_session(&pool, session(SessionKind::Job, 200.0, today))
+            .await
+            .unwrap();
+        let paid = insert_job(
+            &pool,
+            job(Some(ses.id), 200.0, 5_000, JobStatus::Delivered, today),
+        )
+        .await
+        .unwrap();
+        let ses = insert_session(&pool, session(SessionKind::Job, 20.0, today))
+            .await
+            .unwrap();
+        let cancelled = insert_job(
+            &pool,
+            job(Some(ses.id), 20.0, 3_000, JobStatus::Cancelled, today),
+        )
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let game = |revenue, penalty| GameResult {
+            game_revenue: revenue,
+            cancel_penalty: penalty,
+            ..Default::default()
+        };
+        set_game_result(&mut conn, &paid.id, &game(Some(4_650), None))
+            .await
+            .unwrap();
+        set_game_result(&mut conn, &cancelled.id, &game(None, Some(700)))
+            .await
+            .unwrap();
+        let cost = |amount, at: DateTime<Utc>| Expense {
+            kind: ExpenseKind::Toll,
+            amount,
+            detail: None,
+            at: at.naive_utc(),
+            truck_make: Some("Scania".into()),
+            truck_model: Some("R 730".into()),
+        };
+        insert_expense_row(&mut conn, Some(&paid.id), &cost(19, today))
+            .await
+            .unwrap();
+        insert_expense_row(&mut conn, None, &cost(81, today))
+            .await
+            .unwrap();
+        // Paid last month: in the lifetime total only.
+        insert_expense_row(&mut conn, None, &cost(1_000, today - Duration::days(40)))
+            .await
+            .unwrap();
+        drop(conn);
+
+        let stats = fetch_dashboard_stats(&pool, query(now(), 0)).await.unwrap();
+        assert_eq!(stats.lifetime.income, 4_650);
+        assert_eq!(stats.lifetime.deliveries, 1);
+        assert_eq!(stats.lifetime.costs, 19 + 81 + 1_000 + 700);
+        assert_eq!(stats.this_month.costs, 19 + 81 + 700);
     }
 }

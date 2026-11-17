@@ -181,6 +181,7 @@ async fn tick(
                 let sent = match &row {
                     Created::Session(s) => app.emit("session:created", s),
                     Created::Job(j) => app.emit("job:created", j),
+                    Created::Expense(e) => app.emit("expense:created", e),
                 };
                 if let Err(e) = sent {
                     tracing::warn!(error = %e, "could not emit telemetry event");

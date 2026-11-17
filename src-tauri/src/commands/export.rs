@@ -17,8 +17,9 @@ use tauri::State;
 use crate::db::models::Job;
 use crate::db::AppState;
 
-/// Column order of the CSV. Keep it stable: people build spreadsheets on it.
-pub const CSV_COLUMNS: [&str; 24] = [
+/// Column order of the CSV. Keep it stable: people build spreadsheets on it. New columns go at
+/// the end (the game's figures and the job's costs, #4756).
+pub const CSV_COLUMNS: [&str; 32] = [
     "id",
     "source",
     "status",
@@ -43,6 +44,14 @@ pub const CSV_COLUMNS: [&str; 24] = [
     "flagged",
     "flag_reason",
     "notes",
+    "game_revenue",
+    "earned_xp",
+    "cargo_damage",
+    "game_distance_km",
+    "auto_park",
+    "auto_load",
+    "cancel_penalty",
+    "costs",
 ];
 
 /// Quote a field when RFC 4180 requires it (comma, quote, CR or LF), doubling inner quotes.
@@ -58,9 +67,10 @@ fn opt<T: ToString>(v: &Option<T>) -> String {
     v.as_ref().map(ToString::to_string).unwrap_or_default()
 }
 
-/// One CSV line (with CRLF) for a job, in `CSV_COLUMNS` order.
-fn csv_row(job: &Job) -> String {
-    let fields: [String; 24] = [
+/// One CSV line (with CRLF) for a job, in `CSV_COLUMNS` order. `costs` is the sum of the job's
+/// tolls, fines and fares.
+fn csv_row(job: &Job, costs: i64) -> String {
+    let fields: [String; 32] = [
         job.id.clone(),
         format!("{:?}", job.source).to_uppercase(),
         format!("{:?}", job.status).to_uppercase(),
@@ -85,6 +95,14 @@ fn csv_row(job: &Job) -> String {
         job.flagged.to_string(),
         opt(&job.flag_reason),
         opt(&job.notes),
+        opt(&job.game.game_revenue),
+        opt(&job.game.earned_xp),
+        opt(&job.game.cargo_damage),
+        opt(&job.game.game_distance_km),
+        opt(&job.game.auto_park),
+        opt(&job.game.auto_load),
+        opt(&job.game.cancel_penalty),
+        costs.to_string(),
     ];
     let mut line = String::new();
     for (i, field) in fields.iter().enumerate() {
@@ -103,10 +121,18 @@ pub async fn jobs_csv(pool: &SqlitePool) -> Result<(String, usize)> {
         .fetch_all(pool)
         .await
         .context("loading jobs for export")?;
+    let costs: std::collections::HashMap<String, i64> = sqlx::query_as(
+        "SELECT job_id, SUM(amount) FROM expenses WHERE job_id IS NOT NULL GROUP BY job_id",
+    )
+    .fetch_all(pool)
+    .await
+    .context("loading costs for export")?
+    .into_iter()
+    .collect();
     let mut out = String::new();
     writeln!(out, "{}\r", CSV_COLUMNS.join(",")).expect("writing to a String");
     for job in &jobs {
-        out.push_str(&csv_row(job));
+        out.push_str(&csv_row(job, costs.get(&job.id).copied().unwrap_or(0)));
     }
     Ok((out, jobs.len()))
 }
@@ -239,8 +265,9 @@ mod tests {
         let rotterdam = lines.iter().find(|l| l.contains("Rotterdam")).unwrap();
         assert!(rotterdam.contains(",MANUAL,DELIVERED,2026-05-01T11:00:00+00:00,"));
         assert!(rotterdam.contains(",100.5,"));
-        assert!(rotterdam.ends_with(",false,,\"fragile, keep \"\"cool\"\"\""));
-        // Every data row has the same number of unquoted commas as the header: 23.
+        // Notes, then the game's figures (none for a manual job) and its costs.
+        assert!(rotterdam.ends_with(",false,,\"fragile, keep \"\"cool\"\"\",,,,,,,,0"));
+        // Every data row has the same number of unquoted commas as the header.
         let berlin = lines.iter().find(|l| l.contains("Berlin")).unwrap();
         assert_eq!(berlin.matches(',').count(), CSV_COLUMNS.len() - 1);
 

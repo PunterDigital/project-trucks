@@ -15,7 +15,7 @@
 
 use chrono::{Duration, NaiveDate, NaiveDateTime};
 
-use super::{JobSnapshot, TelemetrySnapshot, TruckSnapshot};
+use super::{DeliveryReport, GameplayEvent, JobSnapshot, TelemetrySnapshot, TruckSnapshot};
 
 /// Name of the plugin's file mapping (`SCS_PLUGIN_MMF_NAME`).
 pub const MMF_NAME: &str = "Local\\SCSTelemetry";
@@ -65,10 +65,39 @@ mod off {
     pub const COMP_DST: usize = 2876;
     pub const CITY_SRC: usize = 3004;
     pub const COMP_SRC: usize = 3132;
+    // Zone 2 again: gameplay_ui follows truck_ui (4 u32 + 16 + 32 + 32 u32 arrays).
+    // (jobDeliveredDeliveryTime 440, jobStartingTime 444, jobFinishedTime 448: not read.)
+    // Zone 3 (500..700): restStop, gear, gearDashboard, hshifterResulting[32], then gameplay_i.
+    pub const DELIVERED_XP: usize = 640;
+    // Zone 4: gameplay_f follows truck_f.
+    pub const DELIVERED_CARGO_DAMAGE: usize = 1456;
+    pub const DELIVERED_DISTANCE: usize = 1460;
+    // Zone 5: gameplay_b follows truck_b (24 bools, 16 wheels, 2 shifter toggles, 5 axle bools).
+    pub const DELIVERED_AUTOPARK: usize = 1613;
+    pub const DELIVERED_AUTOLOAD: usize = 1614;
+    // Zone 9: gameplay_s follows config_s (14 strings, shifterType[16], 3 strings, jobMarket[32]).
+    pub const FINE_OFFENCE: usize = 3436;
+    pub const FERRY_SOURCE: usize = 3468;
+    pub const FERRY_TARGET: usize = 3532;
+    pub const TRAIN_SOURCE: usize = 3724;
+    pub const TRAIN_TARGET: usize = 3788;
     // Zone 10 (4000..4200)
     pub const JOB_INCOME: usize = 4000;
-    // Zone 12 (4300..4400)
+    // Zone 11 (4200..4300): gameplay_ll (i64)
+    pub const CANCEL_PENALTY: usize = 4200;
+    pub const DELIVERED_REVENUE: usize = 4208;
+    pub const FINE_AMOUNT: usize = 4216;
+    pub const TOLL_AMOUNT: usize = 4224;
+    pub const FERRY_AMOUNT: usize = 4232;
+    pub const TRAIN_AMOUNT: usize = 4240;
+    // Zone 12 (4300..4400): special_b
     pub const ON_JOB: usize = 4300;
+    pub const JOB_CANCELLED: usize = 4302;
+    pub const JOB_DELIVERED: usize = 4303;
+    pub const FINED: usize = 4304;
+    pub const TOLLGATE: usize = 4305;
+    pub const FERRY: usize = 4306;
+    pub const TRAIN: usize = 4307;
     // Zone 14: trailer[0] (6000..7560)
     pub const TRAILER0: usize = 6000;
     pub const TRAILER0_ATTACHED: usize = TRAILER0 + 80;
@@ -88,6 +117,71 @@ pub enum ScsFrameError {
 
 /// A checked view of one copied frame.
 pub struct ScsFrame<'a>(&'a [u8]);
+
+/// The plugin's gameplay-event flags (`special_b`). It flips one (`^= true`, scs_telemetry.cpp
+/// V.1.12.1) each time the game sends that event, so a change between two frames is one event,
+/// whichever way it went. Shay's recorded delivery: the toll flag went 0 → 1 at the toll and
+/// stayed; at the drop-off `jobDelivered` went 0 → 1 with the revenue and XP filled in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct EventFlags {
+    pub delivered: bool,
+    pub cancelled: bool,
+    pub fined: bool,
+    pub tollgate: bool,
+    pub ferry: bool,
+    pub train: bool,
+}
+
+/// Turns flag flips into [`GameplayEvent`]s. The first frame it sees is the baseline: whatever
+/// the flags say then happened before the app was looking.
+#[derive(Debug, Default)]
+pub struct EventTracker {
+    last: Option<EventFlags>,
+}
+
+impl EventTracker {
+    pub fn events(&mut self, frame: &ScsFrame<'_>) -> Vec<GameplayEvent> {
+        let now = frame.event_flags();
+        let Some(before) = self.last.replace(now) else {
+            return Vec::new();
+        };
+        let mut events = Vec::new();
+        if now.delivered != before.delivered {
+            events.push(GameplayEvent::JobDelivered(frame.delivery_report()));
+        }
+        if now.cancelled != before.cancelled {
+            events.push(GameplayEvent::JobCancelled {
+                penalty: frame.i64(off::CANCEL_PENALTY),
+            });
+        }
+        if now.fined != before.fined {
+            events.push(GameplayEvent::Fined {
+                amount: frame.i64(off::FINE_AMOUNT),
+                offence: frame.short_string(off::FINE_OFFENCE, 32),
+            });
+        }
+        if now.tollgate != before.tollgate {
+            events.push(GameplayEvent::Tollgate {
+                amount: frame.i64(off::TOLL_AMOUNT),
+            });
+        }
+        if now.ferry != before.ferry {
+            events.push(GameplayEvent::Ferry {
+                amount: frame.i64(off::FERRY_AMOUNT),
+                source: frame.string(off::FERRY_SOURCE),
+                target: frame.string(off::FERRY_TARGET),
+            });
+        }
+        if now.train != before.train {
+            events.push(GameplayEvent::Train {
+                amount: frame.i64(off::TRAIN_AMOUNT),
+                source: frame.string(off::TRAIN_SOURCE),
+                target: frame.string(off::TRAIN_TARGET),
+            });
+        }
+        events
+    }
+}
 
 fn game_minutes(minutes: u32) -> Option<NaiveDateTime> {
     let epoch = NaiveDate::from_ymd_opt(1, 1, 1)?.and_hms_opt(0, 0, 0)?;
@@ -144,9 +238,39 @@ impl<'a> ScsFrame<'a> {
         f64::from_le_bytes(self.0[at..at + 8].try_into().expect("8 bytes"))
     }
 
+    fn i64(&self, at: usize) -> i64 {
+        i64::from_le_bytes(self.0[at..at + 8].try_into().expect("8 bytes"))
+    }
+
+    pub fn event_flags(&self) -> EventFlags {
+        EventFlags {
+            delivered: self.flag(off::JOB_DELIVERED),
+            cancelled: self.flag(off::JOB_CANCELLED),
+            fined: self.flag(off::FINED),
+            tollgate: self.flag(off::TOLLGATE),
+            ferry: self.flag(off::FERRY),
+            train: self.flag(off::TRAIN),
+        }
+    }
+
+    fn delivery_report(&self) -> DeliveryReport {
+        DeliveryReport {
+            revenue: self.i64(off::DELIVERED_REVENUE),
+            earned_xp: self.u32(off::DELIVERED_XP) as i32,
+            cargo_damage: positive(self.f32(off::DELIVERED_CARGO_DAMAGE)).min(1.0),
+            distance_km: positive(self.f32(off::DELIVERED_DISTANCE)),
+            auto_park: self.flag(off::DELIVERED_AUTOPARK),
+            auto_load: self.flag(off::DELIVERED_AUTOLOAD),
+        }
+    }
+
     /// A NUL-terminated string field; empty reads as `None`, invalid UTF-8 is replaced.
     fn string(&self, at: usize) -> Option<String> {
-        let raw = &self.0[at..at + STRING_SIZE];
+        self.short_string(at, STRING_SIZE)
+    }
+
+    fn short_string(&self, at: usize, size: usize) -> Option<String> {
+        let raw = &self.0[at..at + size];
         let end = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
         Some(String::from_utf8_lossy(&raw[..end]).into_owned()).filter(|s| !s.is_empty())
     }
@@ -202,6 +326,8 @@ impl<'a> ScsFrame<'a> {
                 route_distance_km: positive(self.f32(off::ROUTE_DISTANCE)) / 1000.0,
                 route_time_minutes: positive(self.f32(off::ROUTE_TIME)) / 60.0,
             }),
+            // Filled by the reader's EventTracker, which remembers the previous frame's flags.
+            events: Vec::new(),
         }
     }
 }
@@ -379,6 +505,124 @@ pub(crate) mod tests {
         assert_eq!(snap.job, None);
     }
 
+    /// #4756: the gameplay fields, re-derived from their zones the same way.
+    #[test]
+    fn gameplay_offsets_follow_the_documented_zones() {
+        // Zone 2: after config_ui (9 u32) comes truck_ui (4 + 16 + 32 + 32 u32), then
+        // gameplay_ui (3 u32) and buffer_ui[48] up to 500.
+        assert_eq!(
+            off::TIME_ABS + 4 + 9 * 4 + (4 + 16 + 32 + 32) * 4 + 3 * 4 + 48,
+            500
+        );
+        // Zone 3 starts at 500: restStop, gear, gearDashboard, hshifterResulting[32], then
+        // gameplay_i.jobDeliveredEarnedXp and buffer_i[56] up to 700.
+        assert_eq!(off::DELIVERED_XP, 500 + 3 * 4 + 32 * 4);
+        assert_eq!(off::DELIVERED_XP + 4 + 56, 700);
+        // Zone 4: gameplay_f follows truck_f's 31 floats + 6 x 16.
+        assert_eq!(off::DELIVERED_CARGO_DAMAGE, off::SPEED + (31 + 6 * 16) * 4);
+        assert_eq!(off::DELIVERED_DISTANCE, off::DELIVERED_CARGO_DAMAGE + 4);
+        // Zone 5: truck_b is 24 bools, wheelOnGround[16], shifterToggle[2] and 5 axle bools; then
+        // gameplay_b (2) and buffer_b[25] up to 1640.
+        assert_eq!(off::DELIVERED_AUTOPARK, 1500 + 66 + 24 + 16 + 2 + 5);
+        assert_eq!(off::DELIVERED_AUTOLOAD + 1 + 25, 1640);
+        // Zone 9: config_s is 14 strings, shifterType[16], 3 strings and jobMarket[32]; then
+        // gameplay_s: fineOffence[32] and 8 strings, buffer_s[20] up to 4000.
+        assert_eq!(off::FINE_OFFENCE, 2300 + 14 * 64 + 16 + 3 * 64 + 32);
+        assert_eq!(off::FERRY_SOURCE, off::FINE_OFFENCE + 32);
+        assert_eq!(off::FERRY_TARGET, off::FERRY_SOURCE + 64);
+        assert_eq!(off::TRAIN_SOURCE, off::FERRY_SOURCE + 4 * 64);
+        assert_eq!(off::TRAIN_TARGET, off::TRAIN_SOURCE + 64);
+        assert_eq!(off::FERRY_SOURCE + 8 * 64 + 20, 4000);
+        // Zone 11 starts at 4200: six i64, buffer_ll[52] up to 4300.
+        assert_eq!(off::CANCEL_PENALTY, 4200);
+        assert_eq!(off::TRAIN_AMOUNT + 8 + 52, 4300);
+        // Zone 12 starts at 4300: onJob, jobFinished, jobCancelled, jobDelivered, fined, tollgate,
+        // ferry, train, refuel, refuelPayed, buffer_special[90] up to 4400.
+        assert_eq!(off::JOB_CANCELLED, off::ON_JOB + 2);
+        assert_eq!(off::TRAIN, off::ON_JOB + 7);
+        assert_eq!(off::ON_JOB + 10 + 90, 4400);
+    }
+
+    fn i64_at(b: &mut Builder, at: usize, v: i64) {
+        b.put(at, &v.to_le_bytes());
+    }
+
+    fn events(tracker: &mut EventTracker, b: &Builder) -> Vec<GameplayEvent> {
+        tracker.events(&ScsFrame::from_bytes(&b.0).unwrap())
+    }
+
+    /// The plugin flips a flag per event (`^= true`): the first frame is only the baseline, and
+    /// every change after it, either way, is one event with the values of that frame.
+    #[test]
+    fn flag_flips_become_gameplay_events() {
+        let mut t = EventTracker::default();
+        let mut b = Builder::active();
+        // Set before the app was looking: not an event.
+        b.put(off::TOLLGATE, &[1]);
+        assert_eq!(events(&mut t, &b), vec![]);
+        assert_eq!(events(&mut t, &b), vec![]);
+
+        // A second toll flips it back.
+        i64_at(&mut b, off::TOLL_AMOUNT, 19);
+        b.put(off::TOLLGATE, &[0]);
+        assert_eq!(
+            events(&mut t, &b),
+            vec![GameplayEvent::Tollgate { amount: 19 }]
+        );
+
+        i64_at(&mut b, off::FINE_AMOUNT, 400);
+        b.str(off::FINE_OFFENCE, "red_signal").put(off::FINED, &[1]);
+        b.str(off::FERRY_SOURCE, "Calais")
+            .str(off::FERRY_TARGET, "Dover")
+            .put(off::FERRY, &[1]);
+        i64_at(&mut b, off::FERRY_AMOUNT, 1_090);
+        assert_eq!(
+            events(&mut t, &b),
+            vec![
+                GameplayEvent::Fined {
+                    amount: 400,
+                    offence: Some("red_signal".into())
+                },
+                GameplayEvent::Ferry {
+                    amount: 1_090,
+                    source: Some("Calais".into()),
+                    target: Some("Dover".into())
+                },
+            ]
+        );
+
+        i64_at(&mut b, off::DELIVERED_REVENUE, 4_478);
+        b.u32(off::DELIVERED_XP, 320)
+            .f32(off::DELIVERED_CARGO_DAMAGE, 0.05)
+            .f32(off::DELIVERED_DISTANCE, 229.0)
+            .put(off::DELIVERED_AUTOPARK, &[1])
+            .put(off::JOB_DELIVERED, &[1]);
+        assert_eq!(
+            events(&mut t, &b),
+            vec![GameplayEvent::JobDelivered(DeliveryReport {
+                revenue: 4_478,
+                earned_xp: 320,
+                cargo_damage: 0.05,
+                distance_km: 229.0,
+                auto_park: true,
+                auto_load: false,
+            })]
+        );
+
+        i64_at(&mut b, off::CANCEL_PENALTY, 900);
+        b.put(off::JOB_CANCELLED, &[1]);
+        assert_eq!(
+            events(&mut t, &b),
+            vec![GameplayEvent::JobCancelled { penalty: 900 }]
+        );
+        b.put(off::TRAIN, &[1]);
+        assert!(matches!(
+            events(&mut t, &b)[..],
+            [GameplayEvent::Train { .. }]
+        ));
+        assert_eq!(events(&mut t, &b), vec![]);
+    }
+
     /// A frame captured on a real job (Nov 15: an external-market job, Málaga → Algeciras, on the
     /// way to the pickup). Funbit's plugin read the same job at the same moment; the only field that
     /// differed is the deadline, which the game sends as u32::MAX for "no deadline".
@@ -446,7 +690,8 @@ mod recorded {
     /// Opt-in converter, never run in CI. Reads a recording made with the control repo's
     /// read-only recorder (records of `[i64 unix ms][7560 bytes scs-telemetry][2048 bytes funbit]`,
     /// one per second) and writes a replay fixture: one sample every 5 s, plus every sample within
-    /// 10 s of a change in pause or job state, so the fixture stays small but keeps every edge.
+    /// 10 s of a change in pause or job state or a gameplay event, so the fixture stays small but
+    /// keeps every edge. Events go through the same [`EventTracker`] as the reader.
     /// `PROJECTTRUCKS_SCS_RECORDING=<in> PROJECTTRUCKS_SCS_REPLAY_OUT=<out> cargo test --lib recording_to_replay`
     #[test]
     fn recording_to_replay() {
@@ -460,16 +705,25 @@ mod recorded {
         const RECORD: usize = 8 + FRAME_SIZE + 2048;
         let bytes = std::fs::read(input).unwrap();
         let mut frames = Vec::new();
+        let mut tracker = EventTracker::default();
         for rec in bytes.as_chunks::<RECORD>().0 {
             let ms = i64::from_le_bytes(rec[..8].try_into().unwrap());
-            let snap = ScsFrame::from_bytes(&rec[8..8 + FRAME_SIZE])
-                .ok()
-                .map(|f| f.to_snapshot());
+            let snap = ScsFrame::from_bytes(&rec[8..8 + FRAME_SIZE]).ok().map(|f| {
+                let mut s = f.to_snapshot();
+                s.events = tracker.events(&f);
+                s
+            });
             frames.push((ms, snap));
         }
         let key = |s: &Option<TelemetrySnapshot>| {
-            s.as_ref()
-                .map(|s| (s.paused, s.job.is_some(), s.truck.trailer_attached))
+            s.as_ref().map(|s| {
+                (
+                    s.paused,
+                    s.job.is_some(),
+                    s.truck.trailer_attached,
+                    !s.events.is_empty(),
+                )
+            })
         };
         let edges: Vec<usize> = (1..frames.len())
             .filter(|&i| key(&frames[i].1) != key(&frames[i - 1].1))
@@ -509,21 +763,11 @@ mod recorded {
             events.extend(machine.step(at, s.snapshot.as_ref()));
         }
         // The recording shows the game pause on the results screen, the job clear 3 s later (still
-        // paused, 0.11 km from the drop-off) and the trailer unhitch, and it ends while the results
-        // screen is still up. Paused frames change nothing, so nothing is recorded yet...
-        assert!(
-            !events
-                .iter()
-                .any(|e| matches!(e, Event::JobCompleted { .. })),
-            "{events:#?}"
-        );
-        // ...until the player leaves the results screen: the last frame, unpaused (synthetic).
-        let last = replay.samples.last().unwrap();
-        let mut resumed = last.snapshot.clone().expect("last frame");
-        assert!(resumed.paused && resumed.job.is_none());
-        resumed.paused = false;
-        let at = start + chrono::Duration::milliseconds(((last.t + 1.0) * 1000.0) as i64);
-        events.extend(machine.step(at, Some(&resumed)));
+        // paused, 0.11 km from the drop-off) with the game's "delivered" event, then the trailer
+        // unhitch, and it ends while the results screen is still up. The event finishes the job
+        // there (#4756): before, nothing was recorded until the player left the results screen.
+        let last = replay.samples.last().unwrap().snapshot.as_ref().unwrap();
+        assert!(last.paused && last.job.is_none());
         let started: Vec<_> = events
             .iter()
             .filter(|e| matches!(e, Event::JobStarted { .. }))
@@ -535,8 +779,9 @@ mod recorded {
                 Event::JobCompleted {
                     job,
                     end_odometer_km,
+                    report,
                     ..
-                } => Some((job, *end_odometer_km)),
+                } => Some((job, *end_odometer_km, report)),
                 _ => None,
             })
             .collect();
@@ -547,7 +792,16 @@ mod recorded {
                 .any(|e| matches!(e, Event::JobCancelled { .. })),
             "{events:#?}"
         );
-        let (job, end_km) = completed[0];
+        let (job, end_km, report) = completed[0];
+        let report = report.as_ref().expect("ended by the game's event");
+        assert_eq!(report.revenue, 4478);
+        assert_eq!(report.earned_xp, 320);
+        assert_eq!(report.distance_km, 229.0);
+        assert!(report.auto_park && report.auto_load);
+        // The 19 toll on the way is on the job.
+        assert_eq!(job.expenses.len(), 1);
+        assert_eq!(job.expenses[0].kind, crate::db::models::ExpenseKind::Toll);
+        assert_eq!(job.expenses[0].amount, 19);
         assert_eq!(job.job.destination_city.as_deref(), Some("Algeciras"));
         assert_eq!(job.job.income, 4478);
         assert_eq!(job.job.deadline, None);

@@ -61,6 +61,33 @@ export interface Job {
   flagged: boolean;
   flagReason: string | null;
   notes: string | null;
+  // What the game reported when a recorded job ended (#4756); null for manual entries and for
+  // jobs recorded before 0.12 or with the old plugin.
+  /** What the game paid (can differ from `declaredIncome`, the offered income). */
+  gameRevenue: number | null;
+  earnedXp: number | null;
+  /** Cargo damage at delivery, 0 to 1. */
+  cargoDamage: number | null;
+  /** The job's distance as the game counts it. */
+  gameDistanceKm: number | null;
+  autoPark: boolean | null;
+  autoLoad: boolean | null;
+  cancelPenalty: number | null;
+}
+
+export type ExpenseKind = "TOLL" | "FINE" | "FERRY" | "TRAIN";
+
+/** A toll, fine or ferry/train fare the game charged (#4756). */
+export interface JobExpense {
+  id: string;
+  jobId: string | null;
+  kind: ExpenseKind;
+  amount: number;
+  /** Fine: the game's offence id (`red_signal`). Ferry/train: "From → To". */
+  detail: string | null;
+  truckMake: string | null;
+  truckModel: string | null;
+  occurredAt: IsoDateTime;
 }
 
 export interface Truck {
@@ -237,9 +264,12 @@ export interface PeriodStats {
   freeRoamKm: number;
   /** Delivered (on time or late); cancelled jobs are not deliveries. */
   deliveries: number;
+  /** What the game paid when it said so (#4756), else the declared income. */
   income: number;
   onTime: number;
   late: number;
+  /** Tolls, fines, ferry/train fares and cancel penalties (#4756). */
+  costs: number;
 }
 
 /** One local day of the distance series (`day` is YYYY-MM-DD). */

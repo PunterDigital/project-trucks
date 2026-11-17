@@ -31,6 +31,51 @@ pub enum SessionStatus {
     Cancelled,
 }
 
+/// A cost the game charged during a drive (#4756).
+#[derive(sqlx::Type, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[sqlx(type_name = "TEXT", rename_all = "SCREAMING_SNAKE_CASE")]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ExpenseKind {
+    Toll,
+    Fine,
+    Ferry,
+    Train,
+}
+
+/// One row of `expenses`: a toll, fine or ferry/train fare, linked to the job it was paid on
+/// (none when driving without a job).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct JobExpense {
+    pub id: String,
+    pub job_id: Option<String>,
+    pub kind: ExpenseKind,
+    pub amount: i64,
+    /// Fine: the game's offence id. Ferry/train: "From → To".
+    pub detail: Option<String>,
+    pub truck_make: Option<String>,
+    pub truck_model: Option<String>,
+    pub occurred_at: DateTime<Utc>,
+}
+
+/// What the game reported when a recorded job ended (#4756, scs-telemetry only): all `None` for
+/// manual entries and for jobs recorded before 0.12 or with the old plugin.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct GameResult {
+    /// What the game paid (can differ from `declared_income`, the offered income).
+    pub game_revenue: Option<i64>,
+    pub earned_xp: Option<i64>,
+    /// Cargo damage at delivery, 0.0 to 1.0.
+    pub cargo_damage: Option<f64>,
+    /// The job's distance as the game counts it.
+    pub game_distance_km: Option<f64>,
+    pub auto_park: Option<bool>,
+    pub auto_load: Option<bool>,
+    /// What cancelling cost.
+    pub cancel_penalty: Option<i64>,
+}
+
 #[derive(sqlx::Type, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[sqlx(type_name = "TEXT", rename_all = "SCREAMING_SNAKE_CASE")]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -97,6 +142,9 @@ pub struct Job {
     pub flagged: bool,
     pub flag_reason: Option<String>,
     pub notes: Option<String>,
+    #[serde(flatten)]
+    #[sqlx(flatten)]
+    pub game: GameResult,
 }
 
 /// Per-truck rollup. Maintained by the write paths in commands::sessions /
@@ -269,6 +317,7 @@ mod tests {
             flagged: false,
             flag_reason: None,
             notes: None,
+            game: Default::default(),
         }
     }
 

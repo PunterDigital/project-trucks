@@ -139,6 +139,7 @@ mod tests {
                 wear_trailer: 0.0,
             },
             job,
+            events: Vec::new(),
         }
     }
 
@@ -151,6 +152,7 @@ mod tests {
             started_at: at(10, 0),
             started_game_time: None,
             wear: Default::default(),
+            expenses: Vec::new(),
         }
     }
 
