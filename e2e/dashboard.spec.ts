@@ -178,3 +178,92 @@ test("stat cards, charts and recent jobs follow the seeded data", async ({ page 
     .click();
   await expect(page.getByRole("heading", { name: "Calais → Berlin" })).toBeVisible();
 });
+
+/** WCAG contrast ratio of two CSS colours, painted through a 1×1 canvas (computed values may be oklch()). */
+async function contrast(page: Page, a: string, b: string): Promise<number> {
+  return page.evaluate(
+    ([a, b]) => {
+      const ctx = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+      const luminance = (css: string) => {
+        ctx.clearRect(0, 0, 1, 1);
+        ctx.fillStyle = css;
+        ctx.fillRect(0, 0, 1, 1);
+        const [r, g, b] = Array.from(ctx.getImageData(0, 0, 1, 1).data.slice(0, 3)).map((v) => {
+          const c = v / 255;
+          return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+      return (hi + 0.05) / (lo + 0.05);
+    },
+    [a, b] as const,
+  );
+}
+
+/** A theme token's computed colour (a probe element resolves the var). */
+async function token(page: Page, name: string): Promise<string> {
+  return page.evaluate((name) => {
+    const probe = document.createElement("div");
+    probe.style.color = `var(${name})`;
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, name);
+}
+
+// #5243: free roam (and the donut's "late") were the faintest grey, unreadable on the light card,
+// and recharts painted the tooltip/legend text in the same grey.
+test("chart series, tooltip and legend stay readable in light and dark", async ({ page }) => {
+  await seed(page);
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  await page.getByRole("link", { name: "Dashboard", exact: true }).click();
+
+  const chart = page.getByTestId("distance-chart");
+  await chart.scrollIntoViewIfNeeded();
+  const bars = chart.locator(".recharts-bar-rectangle path");
+  await expect(bars).toHaveCount(2);
+
+  for (const scheme of ["light", "dark"] as const) {
+    // The theme setting defaults to System, which follows this.
+    await page.emulateMedia({ colorScheme: scheme });
+    if (scheme === "dark") await expect(page.locator("html")).toHaveClass(/dark/);
+    else await expect(page.locator("html")).not.toHaveClass(/dark/);
+    const card = await token(page, "--card");
+
+    // Both series stand out from the card (3:1, WCAG's bar for graphics), and from each other.
+    const fills = await bars.evaluateAll((paths) => paths.map((p) => getComputedStyle(p).fill));
+    for (const fill of fills) expect(await contrast(page, fill, card)).toBeGreaterThanOrEqual(3);
+    expect(await contrast(page, fills[0], fills[1])).toBeGreaterThan(1.5);
+    const donutFills = await page
+      .getByTestId("on-time-donut")
+      .locator(".recharts-pie-sector path")
+      .evaluateAll((paths) => paths.map((p) => getComputedStyle(p).fill));
+    for (const fill of donutFills) {
+      expect(await contrast(page, fill, card)).toBeGreaterThanOrEqual(3);
+    }
+
+    // Legend labels are in the text colour, not the series colour (recharts colours its own
+    // wrapper span; the formatter's inner span is what's painted).
+    const foreground = await token(page, "--foreground");
+    for (const name of ["Delivery", "Free roam"]) {
+      const label = chart.locator(".recharts-legend-item-text > span", { hasText: name });
+      await expect(label).toHaveCSS("color", foreground);
+    }
+
+    // Hovering today's bar shows both values in the popover's text colour, one line on the y axis.
+    await bars.last().hover();
+    const tooltip = chart.getByTestId("chart-tooltip");
+    await expect(tooltip).toContainText("Free roam: 30 km");
+    await expect(tooltip).toContainText("Delivery: ");
+    const popoverText = await token(page, "--popover-foreground");
+    await expect(tooltip.getByText("Free roam: 30 km")).toHaveCSS("color", popoverText);
+    await page.mouse.move(0, 0);
+  }
+
+  // Y-axis labels ("… km") are a single line each: recharts wraps into extra <tspan>s.
+  const ticks = chart.locator(".recharts-cartesian-axis-tick-value", { hasText: /km$/ });
+  await expect.poll(() => ticks.count()).toBeGreaterThan(1);
+  for (const tick of await ticks.all()) await expect(tick.locator("tspan")).toHaveCount(1);
+});

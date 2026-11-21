@@ -19,9 +19,11 @@ import { formatKm } from "@/lib/format";
 import type { DistanceDay } from "@/types";
 
 const DELIVERY_COLOR = "var(--chart-4)";
-const FREE_ROAM_COLOR = "var(--chart-1)";
+// Free roam and late use the mid tone: --chart-1 is the faintest grey and vanished against the
+// light card (#5243).
+const FREE_ROAM_COLOR = "var(--chart-2)";
 const ON_TIME_COLOR = "var(--chart-4)";
-const LATE_COLOR = "var(--chart-1)";
+const LATE_COLOR = "var(--chart-2)";
 
 const dayLabel = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
 
@@ -30,6 +32,58 @@ function formatDay(day: string): string {
   const [y, m, d] = day.split("-").map(Number);
   return dayLabel.format(new Date(y, m - 1, d));
 }
+
+type TooltipEntry = {
+  name?: string | number;
+  value?: unknown;
+  color?: string;
+  payload?: { fill?: string; color?: string };
+};
+
+/**
+ * Tooltip body: recharts' default paints each line in its series colour, which made the quiet
+ * series unreadable (#5243). Text stays in the popover colour; a square carries the series colour.
+ */
+function ChartTooltip({
+  active,
+  payload,
+  label,
+  formatLabel,
+  formatValue,
+}: {
+  active?: boolean;
+  payload?: readonly TooltipEntry[];
+  label?: unknown;
+  formatLabel?: (label: string) => string;
+  formatValue: (value: number) => string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+  return (
+    <div
+      data-testid="chart-tooltip"
+      className="bg-popover text-popover-foreground rounded-lg border px-3 py-2 text-xs shadow-sm"
+    >
+      {formatLabel && label !== undefined && (
+        <div className="mb-1 font-medium">{formatLabel(String(label))}</div>
+      )}
+      {payload.map((entry) => (
+        <div key={String(entry.name)} className="flex items-center gap-2 tabular-nums">
+          <span
+            aria-hidden
+            className="size-2.5 shrink-0 rounded-[2px]"
+            style={{ background: entry.payload?.fill ?? entry.payload?.color ?? entry.color }}
+          />
+          <span>
+            {String(entry.name)}: {formatValue(Number(entry.value))}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Legend text in the normal text colour (recharts' default uses the series colour). */
+const legendText = (value: string) => <span style={{ color: "var(--foreground)" }}>{value}</span>;
 
 /** Stacked delivery + free-roam km per day (bars: the days are discrete, and most are empty). */
 export function DistanceChart({ days }: { days: DistanceDay[] }) {
@@ -50,26 +104,36 @@ export function DistanceChart({ days }: { days: DistanceDay[] }) {
             tickFormatter={(v: number) => formatKm(v)}
             tickLine={false}
             axisLine={false}
-            width={64}
+            // 64 px wrapped "3,800 km" onto two lines (#5243).
+            width={76}
             tick={{ fontSize: 11, fill: "var(--muted-foreground)" }}
           />
           <Tooltip
-            labelFormatter={(label) => formatDay(String(label))}
-            formatter={(value, name) => [formatKm(Number(value)), String(name)]}
-            contentStyle={{
-              background: "var(--popover)",
-              color: "var(--popover-foreground)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              fontSize: 12,
-            }}
+            cursor={{ fill: "var(--muted)", opacity: 0.5 }}
+            content={(props) => (
+              <ChartTooltip
+                active={props.active}
+                payload={props.payload as readonly TooltipEntry[] | undefined}
+                label={props.label}
+                formatLabel={formatDay}
+                formatValue={formatKm}
+              />
+            )}
           />
-          <Legend iconType="square" iconSize={10} wrapperStyle={{ fontSize: 12 }} />
+          <Legend
+            iconType="square"
+            iconSize={10}
+            wrapperStyle={{ fontSize: 12 }}
+            formatter={legendText}
+          />
+          {/* A 1 px card-coloured edge keeps the two stacked parts apart (#5243). */}
           <Bar
             dataKey="deliveryKm"
             name="Delivery"
             stackId="km"
             fill={DELIVERY_COLOR}
+            stroke="var(--card)"
+            strokeWidth={1}
             isAnimationActive={false}
           />
           <Bar
@@ -77,6 +141,8 @@ export function DistanceChart({ days }: { days: DistanceDay[] }) {
             name="Free roam"
             stackId="km"
             fill={FREE_ROAM_COLOR}
+            stroke="var(--card)"
+            strokeWidth={1}
             radius={[2, 2, 0, 0]}
             isAnimationActive={false}
           />
@@ -116,14 +182,13 @@ export function OnTimeDonut({ onTime, late }: { onTime: number; late: number }) 
           </Pie>
           {total > 0 && (
             <Tooltip
-              formatter={(value, name) => [String(value), String(name)]}
-              contentStyle={{
-                background: "var(--popover)",
-                color: "var(--popover-foreground)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                fontSize: 12,
-              }}
+              content={(props) => (
+                <ChartTooltip
+                  active={props.active}
+                  payload={props.payload as readonly TooltipEntry[] | undefined}
+                  formatValue={(v) => String(v)}
+                />
+              )}
             />
           )}
         </PieChart>
