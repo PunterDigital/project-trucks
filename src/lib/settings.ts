@@ -23,11 +23,21 @@ export async function loadSettings(): Promise<void> {
   publish(await api.getSettings());
 }
 
+// Saves go out one at a time. Each `update_settings` writes its keys and answers with the whole
+// row, so two saves in flight (the ETS2 folder's blur, then a click on Miles) could answer out of
+// order and the older reply put the old units back on the page, although Miles was saved.
+let queue: Promise<unknown> = Promise.resolve();
+
 /** Save a change and publish the result to every subscriber. */
-export async function updateSettings(patch: SettingsPatch): Promise<Settings> {
-  const next = await api.updateSettings(patch);
-  publish(next);
-  return next;
+export function updateSettings(patch: SettingsPatch): Promise<Settings> {
+  const run = queue.then(async () => {
+    const next = await api.updateSettings(patch);
+    publish(next);
+    return next;
+  });
+  // A failed save rejects its own caller but doesn't hold up the next one.
+  queue = run.catch(() => undefined);
+  return run;
 }
 
 /** The settings, or `null` until the first load finishes. */
