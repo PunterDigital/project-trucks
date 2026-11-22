@@ -4,6 +4,40 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.12.0 — 2026-11-23
+
+### Features
+- **Dark theme.** Settings → Theme has Light, Dark and System (the default, which follows Windows' app mode and keeps
+  following it while the app is open). The window opens in the right colours with no white flash, and the charts and
+  pop-up messages are readable in the dark theme. ([#85](https://github.com/PunterDigital/project-trucks/pull/85))
+- **Install updates automatically.** A new setting in Settings → Updates (off by default). When it's on, a new version
+  downloads in the background and installs when you close ProjectTrucks, which then reopens on the new version. It
+  never installs while ETS2 is running or a job is being recorded; it waits for the next launch instead. **Install
+  now** in the banner does it straight away. ([#87](https://github.com/PunterDigital/project-trucks/pull/87),
+  [#88](https://github.com/PunterDigital/project-trucks/pull/88))
+- **What the game says about your jobs.** With the scs-telemetry plugin, deliveries and cancellations now come
+  straight from the game, so a job finishes even if you quit from the results screen. Each job records what the game
+  paid, the XP, cargo damage, the distance the game counted, auto-park/auto-load and any cancellation penalty. Tolls,
+  fines and ferry or train fares are listed under **Costs** on the job page, and the Dashboard's income cards show
+  what you spent on them. The CSV export has eight new columns at the end.
+  ([#89](https://github.com/PunterDigital/project-trucks/pull/89))
+- **Those figures reach the Hub.** Linked apps now send the game's revenue, XP, cargo damage, cancellation penalty and
+  the job's total costs to ProjectTrucks Hub. ([#97](https://github.com/PunterDigital/project-trucks/pull/97))
+
+### Fixes
+- **Easier-to-read dashboard charts.** Free roam (distance chart) and Late (on-time chart) use a darker colour, the
+  tooltip and legend text are readable in both themes, and long distances on the axis no longer wrap.
+  ([#95](https://github.com/PunterDigital/project-trucks/pull/95))
+- **Settings changes no longer flip back.** Changing two settings quickly one after the other could show the first
+  one's old value (for example Kilometres after you picked Miles), though both were saved.
+  ([#96](https://github.com/PunterDigital/project-trucks/pull/96))
+
+### Maintenance
+- Dependency updates, Tauri 2.12.7 included. ([#94](https://github.com/PunterDigital/project-trucks/pull/94), [#98](https://github.com/PunterDigital/project-trucks/pull/98))
+- The app's pages are loaded as separate chunks instead of one 1.1 MB bundle, and the build prints no warnings.
+  ([#92](https://github.com/PunterDigital/project-trucks/pull/92))
+- The end-to-end tests run in parallel. ([#86](https://github.com/PunterDigital/project-trucks/pull/86))
+
 ## v0.11.0 — 2026-11-16
 
 ### Features
