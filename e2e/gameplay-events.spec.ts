@@ -1,4 +1,5 @@
 import { expect, test } from "./fixtures";
+import { link, StubHub } from "./stub-hub";
 
 test.skip(process.platform !== "win32", "WebView2 (Windows) is the only webview with CDP");
 
@@ -150,4 +151,36 @@ test("the game's events record the delivery on the results screen, with its figu
   const lifetimeIncome = page.locator('[data-testid="stat-card"][data-label="Income"]').first();
   await expect(lifetimeIncome).toContainText("4,650 €");
   await expect(lifetimeIncome).toContainText("326 € in tolls, fines and fares");
+});
+
+// #5227: linked to a Hub, the same delivery goes up with the game's figures and its costs.
+const withHub = test.extend<{ hub: StubHub }>({
+  hub: async ({}, use) => {
+    const hub = new StubHub();
+    await hub.start();
+    await use(hub);
+    await hub.stop();
+  },
+  appEnv: async ({ hub }, use) => {
+    await use({ PROJECTTRUCKS_HUB_URL: hub.url });
+  },
+});
+
+withHub("the Hub receives the game's figures and the job's costs", async ({ page, hub }) => {
+  await link(page, hub);
+  await page.getByLabel("Record drives and deliveries from ETS2 automatically").click();
+  await expect(page.getByTestId("auto-capture-pill")).toHaveAttribute("data-capture", "on");
+
+  const sent = () => [...hub.jobs.values()].find((j) => j.dest_city === "Rotterdam");
+  await expect.poll(sent, { timeout: 60_000 }).toBeTruthy();
+  expect(sent()).toMatchObject({
+    status: "DELIVERED",
+    declared_income: 5000,
+    game_revenue: 4650,
+    earned_xp: 320,
+    cargo_damage: 0.012,
+    // The fine (300) and the toll (19) on the job; the free-roam toll (7) is nobody's.
+    costs: 319,
+    cancel_penalty: null,
+  });
 });

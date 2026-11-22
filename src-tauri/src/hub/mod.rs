@@ -28,6 +28,7 @@ use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::Notify;
 
+use crate::commands::expenses;
 use crate::db::{self, AppState};
 use crate::settings;
 use api::{HubAccount, HubClient, HubError, JobPayload, TokenPoll};
@@ -436,7 +437,11 @@ async fn drain(
         if batch.is_empty() {
             break;
         }
-        let payload: Vec<JobPayload> = batch.iter().map(|(_, job)| JobPayload::from(job)).collect();
+        let mut payload: Vec<JobPayload> = Vec::with_capacity(batch.len());
+        for (_, job) in &batch {
+            let costs = expenses::job_costs(pool, job).await.map_err(|e| db(&e))?;
+            payload.push(JobPayload::from(job).with_costs(costs));
+        }
         match client.post_jobs(token, &payload).await {
             Ok(synced) => {
                 for (queued, _) in &batch {

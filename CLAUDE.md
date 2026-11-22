@@ -164,14 +164,17 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   case a torn frame still shows it. A restored job not yet confirmed by an unpaused frame is left to the old rules,
   which stay as the fallback for Funbit's plugin and missed events. The job row gets the game's figures
   (`jobs.game_revenue`, `earned_xp`, `cargo_damage`, `game_distance_km`, `auto_park`, `auto_load`,
-  `cancel_penalty`; migration 0006; not synced to the Hub) through `commands::expenses::set_game_result`. Tolls,
+  `cancel_penalty`; migration 0006) through `commands::expenses::set_game_result`. Tolls,
   fines and fares go on `JobInProgress.expenses` (saved with the job, so a restart keeps them) and into `expenses`
   with the job's id when it's written (`ON DELETE CASCADE`), or straight away with no job id in free roam. Stats:
   income is `COALESCE(game_revenue, declared_income)`; `PeriodStats.costs` = expenses by `occurred_at` + cancel
   penalties (Dashboard Income card's second line). CSV: eight columns appended. The recorded-delivery fixture was
   regenerated from Shay's raw recording with events (toll 19 at 238 s; delivered: revenue 4,478, XP 320, 229 km,
-  auto-park + auto-load). E2E: `e2e/gameplay-events.spec.ts` (ends on the results screen). Hub sync of the figures
-  is a separate card if wanted.
+  auto-park + auto-load). E2E: `e2e/gameplay-events.spec.ts` (ends on the results screen). Hub sync (#5227): `JobPayload` sends `game_revenue`, `earned_xp`,
+  `cargo_damage`, `cancel_penalty` and `costs` (`expenses::job_costs`: the job's expenses summed; null for a job with
+  no game figures and no expenses, 0 for a scs-telemetry job that paid nothing); migration 0007 adds the four job columns
+  to the outbox trigger. The Hub counts `game_revenue` as income when present. E2E: the second test in
+  `gameplay-events.spec.ts` links to the stub Hub (`e2e/stub-hub.ts`, shared with `hub.spec.ts`) and checks what it got.
 - No-deadline jobs: an external-market job has delivery time `u32::MAX`. Funbit passes it on as -1, which read as a
   date before the game's clock, so every such delivery was recorded **Late**. Both decoders now read it as no
   deadline (`deadline: None`, never late).
