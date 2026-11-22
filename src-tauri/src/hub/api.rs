@@ -104,6 +104,21 @@ pub struct JobPayload {
     pub source: crate::db::models::JobSource,
     pub flagged: bool,
     pub flag_reason: Option<String>,
+    /// What the game reported (#5227, scs-telemetry only); `null` otherwise. Hubs before #5227
+    /// ignore them.
+    pub game_revenue: Option<i64>,
+    pub earned_xp: Option<i64>,
+    pub cargo_damage: Option<f64>,
+    /// The job's tolls, fines and ferry/train fares in total: set with [`JobPayload::with_costs`].
+    pub costs: Option<i64>,
+    pub cancel_penalty: Option<i64>,
+}
+
+impl JobPayload {
+    pub fn with_costs(mut self, costs: Option<i64>) -> Self {
+        self.costs = costs.map(|c| c.max(0));
+        self
+    }
 }
 
 /// The Hub requires these text fields and caps their length; manual entries can leave them blank.
@@ -150,6 +165,11 @@ impl From<&Job> for JobPayload {
             source: job.source,
             flagged: job.flagged,
             flag_reason: opt_text(&job.flag_reason, 255),
+            game_revenue: job.game.game_revenue,
+            earned_xp: job.game.earned_xp.map(|xp| xp.max(0)),
+            cargo_damage: job.game.cargo_damage.map(|d| d.clamp(0.0, 1.0)),
+            costs: None,
+            cancel_penalty: job.game.cancel_penalty.map(|p| p.max(0)),
         }
     }
 }
@@ -412,7 +432,7 @@ fn error_message(body: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::models::{JobSource, JobStatus};
+    use crate::db::models::{GameResult, JobSource, JobStatus};
     use chrono::{TimeZone, Utc};
 
     fn job() -> Job {
@@ -459,6 +479,35 @@ mod tests {
         assert_eq!(value["source_company"], "Unknown");
         assert_eq!(value["truck_model"], serde_json::Value::Null);
         assert_eq!(value["damage_delta"], 1.0);
+        // No game figures (old plugin or a job from before 0.12): sent as null.
+        for key in [
+            "game_revenue",
+            "earned_xp",
+            "cargo_damage",
+            "costs",
+            "cancel_penalty",
+        ] {
+            assert_eq!(value[key], serde_json::Value::Null, "{key}");
+        }
+    }
+
+    #[test]
+    fn payload_carries_the_games_figures_and_costs() {
+        let mut j = job();
+        j.game = GameResult {
+            game_revenue: Some(4_478),
+            earned_xp: Some(320),
+            cargo_damage: Some(1.3),
+            cancel_penalty: Some(-5),
+            ..Default::default()
+        };
+        let value = serde_json::to_value(JobPayload::from(&j).with_costs(Some(319))).unwrap();
+        assert_eq!(value["game_revenue"], 4_478);
+        assert_eq!(value["earned_xp"], 320);
+        assert_eq!(value["cargo_damage"], 1.0);
+        assert_eq!(value["costs"], 319);
+        assert_eq!(value["cancel_penalty"], 0);
+        assert_eq!(value["declared_income"], 12_450);
     }
 
     #[test]

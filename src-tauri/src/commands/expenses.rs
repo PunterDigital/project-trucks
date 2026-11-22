@@ -6,7 +6,7 @@ use sqlx::{SqliteConnection, SqlitePool};
 use tauri::State;
 use uuid::Uuid;
 
-use crate::db::models::{GameResult, JobExpense};
+use crate::db::models::{GameResult, Job, JobExpense};
 use crate::db::AppState;
 use crate::telemetry::Expense;
 
@@ -68,6 +68,22 @@ pub async fn set_game_result(
     .await
     .context("saving the game's figures for the job")?;
     Ok(())
+}
+
+/// The total the Hub gets as a job's `costs` (#5227): its tolls, fines and fares. `None` for a
+/// job without the game's figures and no costs (old plugin, before 0.12), whose costs nobody
+/// recorded; `Some(0)` for a scs-telemetry job that paid nothing.
+pub async fn job_costs(pool: &SqlitePool, job: &Job) -> Result<Option<i64>> {
+    let (count, total): (i64, i64) =
+        sqlx::query_as("SELECT COUNT(*), COALESCE(SUM(amount), 0) FROM expenses WHERE job_id = ?")
+            .bind(&job.id)
+            .fetch_one(pool)
+            .await
+            .context("adding up the job's costs")?;
+    if count == 0 && job.game == GameResult::default() {
+        return Ok(None);
+    }
+    Ok(Some(total))
 }
 
 /// A job's costs, oldest first.

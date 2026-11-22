@@ -372,6 +372,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_games_figures_requeue_a_synced_job_and_its_costs_add_up() {
+        use crate::commands::expenses::{job_costs, set_game_result};
+        use crate::db::models::GameResult;
+
+        let pool = pool().await;
+        set_linked(&pool, true).await;
+        let job = insert_job(&pool, new_job()).await.unwrap();
+        // No figures and no costs recorded (old plugin): nothing to say about costs.
+        assert_eq!(job_costs(&pool, &job).await.unwrap(), None);
+
+        let batch = next_upserts(&pool, 100).await.unwrap();
+        mark_synced(&pool, &batch[0].0, Some("https://hub/jobs/1"), None)
+            .await
+            .unwrap();
+        assert!(queued(&pool).await.is_empty());
+
+        // #5227: the Hub gets the game's figures too, so a change to them goes up again.
+        let game = GameResult {
+            game_revenue: Some(4_478),
+            earned_xp: Some(320),
+            ..Default::default()
+        };
+        let mut conn = pool.acquire().await.unwrap();
+        set_game_result(&mut conn, &job.id, &game).await.unwrap();
+        drop(conn);
+        assert_eq!(queued(&pool).await, vec![(job.id.clone(), "upsert".into())]);
+
+        let with_game = fetch_job(&pool, &job.id).await.unwrap().unwrap();
+        // A scs-telemetry job that paid nothing on the way: 0, not unknown.
+        assert_eq!(job_costs(&pool, &with_game).await.unwrap(), Some(0));
+        for (id, job_id, amount) in [
+            ("e1", Some(job.id.as_str()), 19),
+            ("e2", Some(job.id.as_str()), 300),
+            ("e3", None, 7),
+        ] {
+            sqlx::query(
+                "INSERT INTO expenses (id, job_id, kind, amount, occurred_at)
+                 VALUES (?, ?, 'TOLL', ?, '2026-11-14T12:00:00Z')",
+            )
+            .bind(id)
+            .bind(job_id)
+            .bind(amount)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        // The free-roam toll (no job) isn't this job's.
+        assert_eq!(job_costs(&pool, &with_game).await.unwrap(), Some(319));
+    }
+
+    #[tokio::test]
     async fn nothing_is_queued_while_unlinked() {
         let pool = pool().await;
         insert_job(&pool, new_job()).await.unwrap();
