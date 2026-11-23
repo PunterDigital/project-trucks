@@ -334,7 +334,7 @@ pub async fn create_job(state: State<'_, AppState>, mut input: NewJob) -> Result
     // This command is the Add job form: whatever it sends, a job typed in by hand is MANUAL, so
     // it never counts as recorded or reaches the Hub (#4751). Recorded jobs are inserted by the
     // telemetry runner, not through here. Test profiles may seed recorded jobs.
-    if crate::db::data_dir_override().is_none() {
+    if crate::db::test_profile_dir().is_none() {
         input.source = JobSource::Manual;
     }
     insert_job(&state.pool, input)

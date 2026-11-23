@@ -72,6 +72,21 @@ fn opt<T: ToString>(v: &Option<T>) -> String {
     v.as_ref().map(ToString::to_string).unwrap_or_default()
 }
 
+/// A text cell (city, company, cargo, truck, notes…). Spreadsheets run a cell that starts with
+/// `=`, `+`, `-`, `@`, a tab or a CR as a formula, so such text gets a leading `'` (#5614, the
+/// OWASP CSV-injection advice). Number columns are left alone: a negative number stays one.
+pub fn text(value: &str) -> String {
+    if value.starts_with(['=', '+', '-', '@', '\t', '\r']) {
+        format!("'{value}")
+    } else {
+        value.to_owned()
+    }
+}
+
+fn opt_text(v: &Option<String>) -> String {
+    v.as_deref().map(text).unwrap_or_default()
+}
+
 /// One CSV line (with CRLF) for a job, in `CSV_COLUMNS` order. `costs` is the sum of the job's
 /// tolls, fines and fares.
 fn csv_row(job: &Job, costs: i64) -> String {
@@ -82,24 +97,24 @@ fn csv_row(job: &Job, costs: i64) -> String {
         job.completed_at.to_rfc3339(),
         job.started_at.to_rfc3339(),
         job.duration_sec.to_string(),
-        job.source_city.clone(),
-        job.source_company.clone(),
-        job.dest_city.clone(),
-        job.dest_company.clone(),
-        job.cargo_id.clone(),
-        job.cargo_name.clone(),
+        text(&job.source_city),
+        text(&job.source_company),
+        text(&job.dest_city),
+        text(&job.dest_company),
+        text(&job.cargo_id),
+        text(&job.cargo_name),
         job.cargo_mass_kg.to_string(),
         job.declared_income.to_string(),
         job.distance_km.to_string(),
         job.avg_speed_kmh.to_string(),
         opt(&job.fuel_used_l),
         opt(&job.damage_delta),
-        opt(&job.truck_make),
-        opt(&job.truck_model),
+        opt_text(&job.truck_make),
+        opt_text(&job.truck_model),
         opt(&job.session_id),
         job.flagged.to_string(),
-        opt(&job.flag_reason),
-        opt(&job.notes),
+        opt_text(&job.flag_reason),
+        opt_text(&job.notes),
         opt(&job.game.game_revenue),
         opt(&job.game.earned_xp),
         opt(&job.game.cargo_damage),
@@ -229,7 +244,7 @@ async fn pick_save_path<R: Runtime>(
     file_name: String,
     filter: (&str, &str),
 ) -> Result<Option<PathBuf>> {
-    if let Some(dir) = crate::db::data_dir_override() {
+    if let Some(dir) = crate::db::test_profile_dir() {
         return Ok(std::fs::read_to_string(dir.join("e2e-save-as"))
             .ok()
             .and_then(|s| s.lines().next().map(|l| PathBuf::from(l.trim())))
@@ -366,6 +381,27 @@ mod tests {
             source: JobSource::Manual,
             notes: notes.map(Into::into),
         }
+    }
+
+    #[test]
+    fn text_that_looks_like_a_formula_is_defused() {
+        for (raw, out) in [
+            ("=HYPERLINK(\"http://x\")", "'=HYPERLINK(\"http://x\")"),
+            ("+1", "'+1"),
+            ("-2+3", "'-2+3"),
+            ("@SUM(A1)", "'@SUM(A1)"),
+            ("\tcmd", "'\tcmd"),
+            ("\rcmd", "'\rcmd"),
+            ("Rotterdam", "Rotterdam"),
+            ("a=b", "a=b"),
+            ("", ""),
+        ] {
+            assert_eq!(text(raw), out, "{raw:?}");
+        }
+        assert_eq!(opt_text(&Some("=1".into())), "'=1");
+        assert_eq!(opt_text(&None), "");
+        // Then quoted as usual where RFC 4180 needs it.
+        assert_eq!(csv_field(&text("=A1,B1")), "\"'=A1,B1\"");
     }
 
     #[test]
