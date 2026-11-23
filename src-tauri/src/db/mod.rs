@@ -100,11 +100,28 @@ pub async fn repair_line_ending_checksums(pool: &SqlitePool, migrator: &Migrator
 /// sets it so tests run against a throwaway database, never the real one.
 pub const DATA_DIR_ENV: &str = "PROJECTTRUCKS_DATA_DIR";
 
-/// The data directory override from [`DATA_DIR_ENV`], if set.
+/// The data directory override from [`DATA_DIR_ENV`], if set. It only moves the data; the test
+/// hooks also need [`TEST_HOOKS`], see [`test_profile_dir`].
 pub fn data_dir_override() -> Option<PathBuf> {
     std::env::var_os(DATA_DIR_ENV)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
+}
+
+/// Whether this build has the E2E test hooks: debug builds, or a release built with the `e2e`
+/// feature. A released installer has none, so no environment variable can open a CDP port on
+/// its webview, replay fake jobs into the real database or point it at another update feed or
+/// Hub (#5614).
+pub const TEST_HOOKS: bool = cfg!(any(debug_assertions, feature = "e2e"));
+
+/// The test profile's data dir: [`DATA_DIR_ENV`] set in a build with [`TEST_HOOKS`]. Every
+/// test-only behaviour is keyed on this.
+pub fn test_profile_dir() -> Option<PathBuf> {
+    test_profile_from(TEST_HOOKS, data_dir_override())
+}
+
+pub fn test_profile_from(hooks: bool, data_dir: Option<PathBuf>) -> Option<PathBuf> {
+    data_dir.filter(|_| hooks)
 }
 
 fn resolve_db_path(app: &AppHandle) -> Result<PathBuf> {
@@ -123,6 +140,21 @@ fn resolve_db_path(app: &AppHandle) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    #[test]
+    fn test_hooks_need_the_hooks_and_a_data_dir() {
+        let dir = PathBuf::from("C:/tmp/pt-e2e");
+        assert_eq!(
+            test_profile_from(true, Some(dir.clone())),
+            Some(dir.clone())
+        );
+        assert_eq!(
+            test_profile_from(false, Some(dir)),
+            None,
+            "a released build ignores the hooks even with the data dir moved"
+        );
+        assert_eq!(test_profile_from(true, None), None);
+    }
 
     async fn memory_pool() -> SqlitePool {
         let opts = SqliteConnectOptions::from_str("sqlite::memory:")

@@ -183,17 +183,22 @@ pub fn expected_sha256(digest: Option<&str>) -> Option<String> {
 }
 
 /// Checks a finished download against the asset's published size and digest.
+/// Fails closed (#5614): a release that publishes no size or no SHA-256 digest is not installed.
 pub fn verify_download(received: u64, sha256_hex: &str, asset: &GhAsset) -> Result<(), String> {
-    if asset.size > 0 && received != asset.size {
+    let Some(want) = expected_sha256(asset.digest.as_deref()) else {
+        return Err("The release doesn't publish a checksum for its installer, so it can't be checked. Download it from the release page instead.".into());
+    };
+    if asset.size == 0 {
+        return Err("The release doesn't say how big its installer is, so it can't be checked. Download it from the release page instead.".into());
+    }
+    if received != asset.size {
         return Err(format!(
             "The download was {received} bytes, expected {}. Try again.",
             asset.size
         ));
     }
-    if let Some(want) = expected_sha256(asset.digest.as_deref()) {
-        if !want.eq_ignore_ascii_case(sha256_hex) {
-            return Err("The download didn't match the release's checksum. Try again.".into());
-        }
+    if !want.eq_ignore_ascii_case(sha256_hex) {
+        return Err("The download didn't match the release's checksum. Try again.".into());
     }
     Ok(())
 }
@@ -204,6 +209,33 @@ fn check_scheme(url: &str, allow_http: bool) -> Result<(), String> {
     } else {
         Err(format!("Refusing to download from {url}"))
     }
+}
+
+/// Where a real release's installer may come from.
+const DOWNLOAD_PREFIX: &str = "https://github.com/PunterDigital/project-trucks/releases/download/";
+
+/// The installer URL: on GitHub's feed it must be one of this repo's release downloads (#5614);
+/// a test feed (`allow_http`) may serve it from anywhere on http(s).
+fn check_download_url(url: &str, allow_http: bool) -> Result<(), String> {
+    check_scheme(url, allow_http)?;
+    if allow_http || url.starts_with(DOWNLOAD_PREFIX) {
+        Ok(())
+    } else {
+        Err(format!("Refusing to download from {url}"))
+    }
+}
+
+/// Redirects (GitHub sends release downloads on to its CDN) stay on https outside a test feed.
+fn redirect_policy(allow_http: bool) -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(move |attempt| {
+        if attempt.previous().len() >= 10 {
+            attempt.error("too many redirects")
+        } else if attempt.url().scheme() != "https" && !allow_http {
+            attempt.error("refusing a redirect away from https")
+        } else {
+            attempt.follow()
+        }
+    })
 }
 
 /// What a background download leaves in `pending.json` for the next launch.
@@ -237,6 +269,30 @@ fn sha256_file(path: &Path) -> std::io::Result<String> {
     Ok(digest.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// How long the launch waits for the feed before giving up on a downloaded update.
+const STARTUP_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Does the feed's latest release still publish the installer `pending` names, with the same
+/// version and SHA-256? Checked at launch before a downloaded update installs (#5614).
+pub fn still_published(release: &GhRelease, pending: &PendingInstall) -> Result<(), String> {
+    if parse_version(&release.tag_name).map(|v| v.to_string()) != Some(pending.version.clone()) {
+        return Err(format!(
+            "the latest release is now {}, not {}",
+            release.tag_name, pending.version
+        ));
+    }
+    let asset = release
+        .assets
+        .iter()
+        .find(|a| a.name == pending.file)
+        .ok_or("the release no longer has that installer")?;
+    match expected_sha256(asset.digest.as_deref()) {
+        Some(want) if want.eq_ignore_ascii_case(&pending.sha256) => Ok(()),
+        Some(_) => Err("the release's checksum changed".into()),
+        None => Err("the release publishes no checksum".into()),
+    }
+}
+
 /// The installer a previous session downloaded, if `pending.json` names one that is newer than
 /// `current`, sits in `dir` and still matches its checksum.
 pub fn read_pending(dir: &Path, current: &semver::Version) -> Option<(PendingInstall, PathBuf)> {
@@ -255,7 +311,9 @@ struct Inner {
     status: UpdateStatus,
     asset: Option<GhAsset>,
     /// The verified installer a background download left, while the state is `ready`.
-    ready: Option<PathBuf>,
+    /// With its SHA-256 (lowercase hex), kept in memory and checked again right before the
+    /// installer starts (#5614).
+    ready: Option<(PathBuf, String)>,
 }
 
 /// Managed state behind the update commands.
@@ -273,19 +331,31 @@ pub struct Updater {
 
 impl Updater {
     pub fn new(app: &AppHandle, auto_install: bool) -> Self {
-        let test_dir = db::data_dir_override();
         let feed = resolve_feed(
-            test_dir.is_some(),
+            db::test_profile_dir().is_some(),
             cfg!(debug_assertions),
             std::env::var(FEED_ENV).ok(),
         );
         let current = app.package_info().version.clone();
-        let download_dir = match test_dir {
+        // The app's own local data folder, not %TEMP% (#5614). A moved data dir keeps its own.
+        let download_dir = match db::data_dir_override() {
             Some(dir) => dir.join("update"),
-            None => std::env::temp_dir().join("ProjectTrucks-update"),
+            None => app
+                .path()
+                .app_local_data_dir()
+                .map(|d| d.join("update"))
+                .unwrap_or_else(|_| std::env::temp_dir().join("ProjectTrucks-update")),
         };
+        let allow_http = matches!(
+            feed,
+            Feed::Url {
+                allow_http: true,
+                ..
+            }
+        );
         let client = reqwest::Client::builder()
             .user_agent(format!("ProjectTrucks/{current}"))
+            .redirect(redirect_policy(allow_http))
             .connect_timeout(Duration::from_secs(15))
             .read_timeout(Duration::from_secs(60))
             .build()
@@ -450,7 +520,7 @@ impl Updater {
                     version: latest.version.clone(),
                     page_url: latest.page_url.clone(),
                     file: asset.name.clone(),
-                    sha256,
+                    sha256: sha256.clone(),
                 };
                 serde_json::to_vec_pretty(&pending)
                     .map_err(|e| e.to_string())
@@ -458,7 +528,7 @@ impl Updater {
                         std::fs::write(self.download_dir.join(PENDING_FILE), json)
                             .map_err(|e| format!("Could not save the update: {e}"))
                     })
-                    .map(|()| path)
+                    .map(|()| (path, sha256))
             }
             Err(e) => Err(e),
         };
@@ -466,10 +536,10 @@ impl Updater {
         self.update(app, |i| match result {
             // Turned off while it downloaded: back to a plain "available".
             Ok(_) if !auto => i.status.state = UpdateState::Available,
-            Ok(path) => {
+            Ok(ready) => {
                 tracing::info!(version = %latest.version, "update ready, installs when the app closes");
                 i.status.state = UpdateState::Ready;
-                i.ready = Some(path);
+                i.ready = Some(ready);
             }
             Err(message) => {
                 i.status.state = UpdateState::Error;
@@ -499,9 +569,13 @@ impl Updater {
         }
     }
 
-    /// On launch: picks up an installer a previous session downloaded (when auto-install is on and
-    /// it still checks out) and returns its path; otherwise clears the download folder.
-    pub fn startup(&self) -> Option<PathBuf> {
+    /// On launch: picks up an installer a previous session downloaded (when auto-install is on,
+    /// it still matches `pending.json` **and** the feed still publishes that installer with the
+    /// same digest, #5614) and returns it with its hash; otherwise clears the download folder.
+    /// `pending.json` sits in a folder any program of this user can write to, so it alone isn't
+    /// trusted. Offline at launch: nothing installs; the usual check downloads it again later.
+    /// Blocks for at most [`STARTUP_CHECK_TIMEOUT`] (it runs in `setup()`, before the window).
+    pub fn startup(&self) -> Option<(PathBuf, String)> {
         let found = self
             .auto_install
             .load(Ordering::SeqCst)
@@ -511,20 +585,34 @@ impl Updater {
             self.clean_old_downloads();
             return None;
         };
-        let mut inner = self.inner.lock().unwrap();
-        if inner.status.state == UpdateState::Disabled {
-            drop(inner);
+        let Feed::Url { url, allow_http } = &self.feed else {
+            self.clean_old_downloads();
+            return None;
+        };
+        let fresh = tauri::async_runtime::block_on(async {
+            tokio::time::timeout(STARTUP_CHECK_TIMEOUT, self.fetch_release(url, *allow_http))
+                .await
+                .unwrap_or_else(|_| Err("timed out".into()))
+        });
+        if let Err(why) = fresh
+            .as_ref()
+            .map_err(String::clone)
+            .and_then(|release| still_published(release, &pending))
+        {
+            tracing::info!(%why, "not installing the downloaded update");
             self.clean_old_downloads();
             return None;
         }
+        let sha256 = pending.sha256.to_ascii_lowercase();
+        let mut inner = self.inner.lock().unwrap();
         inner.status.state = UpdateState::Ready;
         inner.status.latest = Some(LatestRelease {
             version: pending.version,
             page_url: pending.page_url,
             can_install: cfg!(windows),
         });
-        inner.ready = Some(path.clone());
-        Some(path)
+        inner.ready = Some((path.clone(), sha256.clone()));
+        Some((path, sha256))
     }
 
     /// `RunEvent::Exit`: installs a ready update (`/P /R /UPDATE`, so the app opens again on the
@@ -534,14 +622,14 @@ impl Updater {
         if !self.auto_install.load(Ordering::SeqCst) {
             return;
         }
-        let path = {
+        let ready = {
             let inner = self.inner.lock().unwrap();
             if inner.status.state != UpdateState::Ready {
                 return;
             }
             inner.ready.clone()
         };
-        let Some(path) = path else {
+        let Some((path, sha256)) = ready else {
             return;
         };
         let job_in_progress = app
@@ -551,7 +639,7 @@ impl Updater {
             tracing::info!(why, "the update installs on the next launch instead");
             return;
         }
-        if let Err(message) = start_installer(&path, &INSTALLER_ARGS) {
+        if let Err(message) = start_installer(&path, &sha256, &INSTALLER_ARGS) {
             tracing::warn!(%message, "could not start the update on exit");
         }
     }
@@ -596,10 +684,13 @@ impl Updater {
             return Err("This build can't install updates itself. Open the release page.".into());
         }
 
-        let result = if let Some(path) = ready {
+        let result = if let Some((path, sha256)) = ready {
             // "Install now" on a background download: still the file that was verified?
+            // (`start_installer` re-hashes it against the hash kept in memory.)
             match read_pending(&self.download_dir, &self.current) {
-                Some((_, verified)) if verified == path => start_installer(&path, &INSTALLER_ARGS),
+                Some((_, verified)) if verified == path => {
+                    start_installer(&path, &sha256, &INSTALLER_ARGS)
+                }
                 _ => Err("The downloaded update changed on disk. Check for updates again.".into()),
             }
         } else {
@@ -613,7 +704,7 @@ impl Updater {
                 i.status.message = None;
             });
             match self.download(app, &asset, *allow_http).await {
-                Ok((path, _)) => start_installer(&path, &INSTALLER_ARGS),
+                Ok((path, sha256)) => start_installer(&path, &sha256, &INSTALLER_ARGS),
                 Err(e) => Err(e),
             }
         };
@@ -645,7 +736,7 @@ impl Updater {
         asset: &GhAsset,
         allow_http: bool,
     ) -> Result<(PathBuf, String), String> {
-        check_scheme(&asset.browser_download_url, allow_http)?;
+        check_download_url(&asset.browser_download_url, allow_http)?;
         let io = |e: std::io::Error| format!("Could not save the update: {e}");
         let dir = &self.download_dir;
         // Our own folder: whatever a previous update left there can go.
@@ -722,7 +813,7 @@ impl Updater {
 /// Is ETS2 running? Test profiles never look at the real process list (Shay may be playing while
 /// E2E runs): only [`GAME_RUNNING_ENV`] counts there.
 pub fn game_running() -> bool {
-    if db::data_dir_override().is_some() {
+    if db::test_profile_dir().is_some() {
         return std::env::var(GAME_RUNNING_ENV).is_ok_and(|v| v == "1");
     }
     process_running(crate::plugin_installer::GAME_EXE)
@@ -770,9 +861,16 @@ fn process_running(_exe: &str) -> bool {
 
 /// Starts the installer, or in a test profile with [`DRY_RUN_ENV`] set, only notes the launch
 /// in `<data dir>/installer-launches.log` (one line: file name and arguments).
-fn start_installer(path: &Path, args: &[&str]) -> Result<(), String> {
+///
+/// Right before either, the file is hashed again and must still be `sha256` (the hash this
+/// session verified), so nothing can swap it between the check and the launch (#5614).
+fn start_installer(path: &Path, sha256: &str, args: &[&str]) -> Result<(), String> {
+    let now = sha256_file(path).map_err(|e| format!("Could not read the update: {e}"))?;
+    if !now.eq_ignore_ascii_case(sha256) {
+        return Err("The downloaded update changed on disk. Check for updates again.".into());
+    }
     let dry_run =
-        db::data_dir_override().filter(|_| std::env::var(DRY_RUN_ENV).is_ok_and(|v| v == "1"));
+        db::test_profile_dir().filter(|_| std::env::var(DRY_RUN_ENV).is_ok_and(|v| v == "1"));
     if let Some(dir) = dry_run {
         use std::io::Write;
         let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -832,12 +930,12 @@ fn launch_installer(_path: &Path, _args: &[&str]) -> Result<(), String> {
 
 /// On launch, before the window opens: installs an update a previous session downloaded but
 /// couldn't install on close. Returns `true` when the installer started and the app should exit.
-pub fn install_pending_on_launch(path: &Path) -> bool {
+pub fn install_pending_on_launch(path: &Path, sha256: &str) -> bool {
     if let Some(why) = install_blocker(game_running(), false) {
         tracing::info!(why, "the downloaded update waits until the app closes");
         return false;
     }
-    match start_installer(path, &INSTALLER_ARGS) {
+    match start_installer(path, sha256, &INSTALLER_ARGS) {
         Ok(()) => true,
         Err(message) => {
             tracing::warn!(%message, "could not start the downloaded update");
@@ -996,9 +1094,36 @@ mod tests {
         assert!(verify_download(body.len() as u64, &other, &a)
             .unwrap_err()
             .contains("checksum"));
-        // No size or digest published: nothing to compare against.
+        // No digest or no size published: refused, never installed unchecked (#5614).
         let bare = asset("ProjectTrucks_0.6.0_x64-setup.exe");
-        assert_eq!(verify_download(99, &other, &bare), Ok(()));
+        assert!(verify_download(99, &other, &bare)
+            .unwrap_err()
+            .contains("checksum"));
+        let mut no_size = a.clone();
+        no_size.size = 0;
+        assert!(verify_download(body.len() as u64, &hex, &no_size)
+            .unwrap_err()
+            .contains("how big"));
+        let mut bad_digest = a.clone();
+        bad_digest.digest = Some("md5:abc".into());
+        assert!(verify_download(body.len() as u64, &hex, &bad_digest).is_err());
+    }
+
+    #[test]
+    fn downloads_come_from_this_repos_releases() {
+        let ok = "https://github.com/PunterDigital/project-trucks/releases/download/v0.6.0/ProjectTrucks_0.6.0_x64-setup.exe";
+        assert!(check_download_url(ok, false).is_ok());
+        for bad in [
+            "https://github.com/someone-else/project-trucks/releases/download/v0.6.0/x_x64-setup.exe",
+            "https://evil.example/ProjectTrucks_0.6.0_x64-setup.exe",
+            "https://github.com/PunterDigital/project-trucks/releases/download.evil.example/x.exe",
+            "http://github.com/PunterDigital/project-trucks/releases/download/v0.6.0/x.exe",
+        ] {
+            assert!(check_download_url(bad, false).is_err(), "{bad}");
+        }
+        // A test feed serves its own stub.
+        assert!(check_download_url("http://127.0.0.1:9999/download/x_x64-setup.exe", true).is_ok());
+        assert!(check_download_url("file:///C:/x.exe", true).is_err());
     }
 
     #[test]

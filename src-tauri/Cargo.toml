@@ -14,6 +14,13 @@ edition = "2021"
 name = "projecttrucks_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# The E2E test hooks (CDP port, telemetry replay, fake update feed and Hub, dry-run installs,
+# the save-dialog stand-in). On in debug builds anyway; release builds have them only with this
+# feature, which CI's E2E build and `pnpm tauri build --no-bundle --features e2e` turn on.
+# Released installers (release.yml) are built without it (#5614).
+e2e = []
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 

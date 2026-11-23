@@ -141,8 +141,9 @@ pub fn client_name() -> String {
 
 impl Hub {
     pub fn new(fallback_dir: std::path::PathBuf) -> Self {
+        // The token file follows the data dir; the stub Hub and http need the test hooks.
         let test_dir = db::data_dir_override();
-        let test_profile = test_dir.is_some();
+        let test_profile = db::test_profile_dir().is_some();
         let url = resolve_url(test_profile, std::env::var(HUB_URL_ENV).ok());
         Hub {
             client: url.as_deref().map(HubClient::new),

@@ -44,7 +44,12 @@ impl Replay {
 }
 
 /// The replay configured through the environment, if any: the fixture and the pause between samples.
+/// Only in a test profile (#5614): elsewhere the variable is ignored, so it can't feed made-up
+/// jobs into a real database (and on to the Hub).
 pub fn from_env() -> Result<Option<(Replay, Duration)>> {
+    if crate::db::test_profile_dir().is_none() {
+        return Ok(None);
+    }
     let Some(path) = std::env::var_os(REPLAY_ENV).filter(|v| !v.is_empty()) else {
         return Ok(None);
     };

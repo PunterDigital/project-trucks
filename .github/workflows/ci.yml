@@ -86,14 +86,17 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      # With the `e2e` feature, so the E2E step below can open its CDP port and use the test
+      # hooks (#5614). These installers are test builds: releases come from release.yml,
+      # which builds without the feature.
       - name: Build installers
-        run: pnpm tauri build
+        run: pnpm tauri build --features e2e
       - name: Check the app icon on the exe and the NSIS installer
         shell: pwsh
         run: ./scripts/check-win-icon.ps1 src-tauri/target/release/projecttrucks.exe (Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe).FullName
       - uses: actions/upload-artifact@v7
         with:
-          name: windows-installers
+          name: windows-installers-e2e-build
           path: |
             src-tauri/target/release/bundle/nsis/*.exe
             src-tauri/target/release/bundle/msi/*.msi

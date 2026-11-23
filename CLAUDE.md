@@ -18,7 +18,7 @@ shadcn/ui frontend, Rust backend with SQLite via sqlx. Read `PLAN.md` (architect
 | Rust format | `cd src-tauri && cargo fmt --check` |
 | Rust lint | `cd src-tauri && cargo clippy --all-targets -- -D warnings` |
 | Rust tests | `cd src-tauri && cargo test` (unit + `tests/m1_demo_flow.rs`, in-memory SQLite) |
-| Release binary (for E2E) | `pnpm tauri build --no-bundle` |
+| Release binary (for E2E) | `pnpm tauri build --no-bundle --features e2e` (without the feature a release binary ignores every test hook, so E2E can't connect) |
 | Installers | `pnpm tauri build` (Windows: NSIS `.exe` + `.msi`) |
 | E2E | `pnpm test:e2e` (Windows only; needs the release or debug binary) |
 
@@ -50,6 +50,13 @@ key press to steal the foreground. Check with `scripts/fg-logger.ps1` in the con
 Isolation: every test sets `PROJECTTRUCKS_DATA_DIR` (see `src-tauri/src/db/mod.rs`), which holds the
 SQLite database and the WebView2 profile (`<dir>/webview`). Never run E2E without it: the default
 data dir is Shay's real database at `%APPDATA%\co.shaypunter.projecttrucks\`.
+
+Test hooks (#5614): the CDP port, telemetry replay, the fake update feed and Hub, dry-run installs, faked ETS2,
+recorded jobs through `create_job` and the save-dialog stand-in all key on `db::test_profile_dir()`, which is the data
+dir override **only** in a build with `db::TEST_HOOKS` (debug builds, or the `e2e` cargo feature). Released installers
+(`release.yml`, no feature) ignore them all; `PROJECTTRUCKS_DATA_DIR` alone just moves the data. CI's Windows job builds
+`pnpm tauri build --features e2e` for its E2E step (its installer artifact is `windows-installers-e2e-build`, a test
+build). A new test-only env var goes behind `test_profile_dir()` too.
 
 Parallel (#4675): `fullyParallel`, 3 workers in CI, 2 locally (`PT_E2E_WORKERS=<n>` overrides). Nothing may be
 shared between tests: the CDP port is `9300 + workerIndex` (specs that relaunch the app use the same), the Hub and
@@ -244,7 +251,11 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   chosen file must end in `.csv` / `.db`, a backup only replaces an empty file or a SQLite database, and never the live
   database. Test profiles have no dialog: `pick_save_path` reads the answer from `<data dir>/e2e-save-as` (first line; no
   file = cancelled), which `e2e/data.spec.ts` writes from Node before clicking the buttons or invoking the commands, then
-  checks the files from Node (`node:sqlite` opens the backup).
+  checks the files from Node (`node:sqlite` opens the backup). Text cells that start with `=`, `+`, `-`, `@`, tab or
+  CR get a leading `'` (`export::text`, CSV injection, #5614); number columns don't.
+- Hub job ids in URL paths (`DELETE`/`PATCH /jobs/{id}`) must match `api::is_job_id` (`job_` + 32 lowercase hex,
+  #5614); an odd id is never sent (a delete counts as done, Hide on Hub fails). No `opener:*` permission and no
+  `@tauri-apps/plugin-opener`: the webview opens nothing itself, the Rust side does.
 - Hub links (#5613): every URL the Hub hands back (approval page, profile, job pages) goes through `hub::check_hub_url`
   before the opener sees it: https on the Hub base's own host and port (http too in a test profile), no user info. The
   opener's Rust API isn't scope-limited and ends in ShellExecute, so a file path, UNC share or `search-ms:` URI from a
@@ -298,6 +309,12 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   `PROJECTTRUCKS_E2E_GAME_RUNNING=1` fakes a running ETS2 (test profiles never read the real process list, so E2E
   behaves the same while Shay plays). E2E closes the app with `taskkill /PID` (no `/F`, i.e. WM_CLOSE) so the exit
   hook runs; the fixture's `close()` kills it hard and skips the hook.
+  Fail-closed (#5614): `verify_download` refuses an asset with no `sha256:` digest or no size; on GitHub's feed the
+  download URL must start with this repo's `releases/download/`, and redirects must stay https. Downloads live in
+  `%LOCALAPPDATA%\co.shaypunter.projecttrucks\update` (not `%TEMP%`). The verified hash stays in memory with the
+  path (`Inner.ready`) and `start_installer` re-hashes the file right before every `ShellExecuteW` (and dry-run log).
+  At launch, a pending install only goes ahead when the feed's latest release still lists that installer with the
+  same version and digest (`still_published`, 10 s timeout); offline or changed = no install, folder cleared.
 - ProjectTrucks Hub sync (#4634, `src-tauri/src/hub/`, `src/components/HubSettings.tsx`, Settings → "ProjectTrucks Hub"):
   links the app to a Hub account (https://project-trucks.shaypunter.co.uk, the Laravel app in `../project-trucks-hub`; API
   contract in its `docs/api.md`) with the device-code flow: `hub_link_start` asks for a code, shows it, opens the approval page

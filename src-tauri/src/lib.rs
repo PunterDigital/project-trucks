@@ -87,8 +87,8 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // Before anything else starts: an update a previous session downloaded installs now, before
     // the window opens, if it couldn't on close (ETS2 was running).
     let updater = updater::Updater::new(&handle, saved.auto_install_updates);
-    if let Some(path) = updater.startup() {
-        if updater::install_pending_on_launch(&path) {
+    if let Some((path, sha256)) = updater.startup() {
+        if updater::install_pending_on_launch(&path, &sha256) {
             tracing::info!("installer started for the downloaded update, exiting");
             tauri::async_runtime::block_on(pool.close());
             std::process::exit(0);
@@ -124,6 +124,24 @@ fn setup_app(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(windows)]
 const E2E_CDP_PORT_ENV: &str = "PROJECTTRUCKS_E2E_CDP_PORT";
 
+/// The E2E CDP port, only in a test profile of a build with the test hooks (#5614): an
+/// unauthenticated DevTools port would let any local process drive the app.
+#[cfg(windows)]
+fn e2e_cdp_port() -> Option<u16> {
+    cdp_port_from(
+        db::test_profile_dir().is_some(),
+        std::env::var(E2E_CDP_PORT_ENV).ok(),
+    )
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn cdp_port_from(test_profile: bool, value: Option<String>) -> Option<u16> {
+    value
+        .filter(|_| test_profile)
+        .and_then(|p| p.trim().parse::<u16>().ok())
+        .filter(|p| *p != 0)
+}
+
 /// wry's default WebView2 flags; `additional_browser_args` replaces them.
 #[cfg(windows)]
 const WEBVIEW2_DEFAULT_ARGS: &str =
@@ -158,9 +176,7 @@ fn create_main_window(app: &tauri::App, theme: &str) -> tauri::Result<()> {
     }
 
     #[cfg(windows)]
-    let e2e_port = std::env::var(E2E_CDP_PORT_ENV)
-        .ok()
-        .and_then(|p| p.parse::<u16>().ok());
+    let e2e_port = e2e_cdp_port();
     #[cfg(windows)]
     if let Some(port) = e2e_port {
         // E2E runs on Shay's PC while he games: the test window must not take focus or sit in
@@ -209,7 +225,7 @@ fn show_startup_error(err: &(dyn std::error::Error + 'static)) {
     let message = error_chain(err);
     tracing::error!(%message, "startup failed");
     #[cfg(windows)]
-    if std::env::var_os(E2E_CDP_PORT_ENV).is_none() {
+    if e2e_cdp_port().is_none() {
         use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
         let wide = |s: &str| -> Vec<u16> {
@@ -232,5 +248,19 @@ fn show_startup_error(err: &(dyn std::error::Error + 'static)) {
                 MB_OK | MB_ICONERROR,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_cdp_port_needs_a_test_profile() {
+        assert_eq!(cdp_port_from(true, Some("9300".into())), Some(9300));
+        assert_eq!(cdp_port_from(false, Some("9300".into())), None);
+        assert_eq!(cdp_port_from(true, None), None);
+        assert_eq!(cdp_port_from(true, Some("nope".into())), None);
+        assert_eq!(cdp_port_from(true, Some("0".into())), None);
     }
 }

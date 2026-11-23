@@ -326,8 +326,9 @@ test.describe("install updates automatically", () => {
     expect(launches(dataDir)).toEqual([]);
     expect(feed.feedRequests).toBe(1);
 
-    // Next launch, game closed: the installer starts (relaunching the app afterwards) and the app
-    // exits before it opens its window or checks the feed again.
+    // Next launch, game closed: the app asks the feed once whether the release still publishes
+    // that installer and digest (#5614), then the installer starts (relaunching the app
+    // afterwards) and the app exits before it opens its window.
     const second = spawn(resolveExe(), [], {
       env: {
         ...process.env,
@@ -344,7 +345,40 @@ test.describe("install updates automatically", () => {
     if (code === "timeout") second.kill();
     expect(code).toBe(0);
     expect(launches(dataDir)).toEqual([`${feed.assetName} /P /R /UPDATE`]);
-    expect(feed.feedRequests).toBe(1);
+    expect(feed.feedRequests).toBe(2);
     expect(feed.downloads).toBe(1);
+  });
+
+  test("a download the feed no longer vouches for is not installed at launch (#5614)", async ({
+    dataDir,
+    feed,
+  }, testInfo) => {
+    const port = 9300 + testInfo.workerIndex;
+    const env = { PROJECTTRUCKS_UPDATE_FEED: feed.url, PROJECTTRUCKS_UPDATE_DRY_RUN: "1" };
+    const first = await launchApp({
+      dataDir,
+      port,
+      env: { ...env, PROJECTTRUCKS_E2E_GAME_RUNNING: "1" },
+    });
+    try {
+      await turnOnAutoInstall(first.page);
+      await closeGracefully(first);
+    } finally {
+      await first.close();
+    }
+    expect(launches(dataDir)).toEqual([]);
+
+    // The release's published digest changed since the download (pending.json and the file on
+    // disk still agree with each other): the launch doesn't install, the app opens as usual.
+    feed.release = { ...feed.release, digest: `sha256:${"1".repeat(64)}` };
+    const second = await launchApp({ dataDir, port, env });
+    try {
+      await expect(second.page.getByRole("link", { name: "Settings", exact: true })).toBeVisible();
+      expect(feed.feedRequests).toBeGreaterThanOrEqual(2);
+      expect(launches(dataDir)).toEqual([]);
+    } finally {
+      await second.close();
+    }
+    expect(launches(dataDir)).toEqual([]);
   });
 });

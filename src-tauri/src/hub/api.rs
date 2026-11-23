@@ -29,6 +29,17 @@ impl HubError {
     }
 }
 
+/// The ids the app makes (`commands::jobs`): `job_` + 32 lowercase hex digits. Ids that go into
+/// a Hub URL path are checked against it, so a crafted one can't reach another endpoint (#5614).
+pub fn is_job_id(id: &str) -> bool {
+    id.strip_prefix("job_").is_some_and(|hex| {
+        hex.len() == 32
+            && hex
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    })
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeviceCode {
     pub device_code: String,
@@ -348,8 +359,13 @@ impl HubClient {
         Ok(parsed.jobs)
     }
 
-    /// 404 counts as done: the Hub never had it.
+    /// 404 counts as done: the Hub never had it. So does an id the app never makes (nothing is
+    /// sent: it can't name a Hub job, and it never goes into a URL path).
     pub async fn delete_job(&self, token: &str, id: &str) -> Result<(), HubError> {
+        if !is_job_id(id) {
+            tracing::warn!(id, "not deleting an odd job id on the Hub");
+            return Ok(());
+        }
         match self
             .send(
                 self.http
@@ -365,6 +381,12 @@ impl HubClient {
 
     /// "Hide on Hub": returns what the Hub stored. 404 = the Hub doesn't have the job.
     pub async fn set_hidden(&self, token: &str, id: &str, hidden: bool) -> Result<bool, HubError> {
+        if !is_job_id(id) {
+            return Err(HubError::Rejected {
+                status: 400,
+                message: "that isn't a job id".into(),
+            });
+        }
         let response = self
             .send(
                 self.http
@@ -434,6 +456,25 @@ mod tests {
     use super::*;
     use crate::db::models::{GameResult, JobSource, JobStatus};
     use chrono::{TimeZone, Utc};
+
+    #[test]
+    fn only_real_job_ids_go_into_urls() {
+        let made = format!("job_{}", uuid::Uuid::new_v4().simple());
+        assert!(is_job_id(&made));
+        assert!(is_job_id("job_0123456789abcdef0123456789abcdef"));
+        for bad in [
+            "job_0123456789ABCDEF0123456789ABCDEF",
+            "job_0123456789abcdef0123456789abcde",
+            "job_0123456789abcdef0123456789abcdef0",
+            "job_../../me",
+            "job_0123456789abcdef0123456789abcd?x",
+            "../tokens/1",
+            "job_1",
+            "",
+        ] {
+            assert!(!is_job_id(bad), "{bad}");
+        }
+    }
 
     fn job() -> Job {
         Job {

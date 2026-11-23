@@ -17,9 +17,6 @@ importers:
       '@tauri-apps/api':
         specifier: ^2.12.5
         version: 2.12.5
-      '@tauri-apps/plugin-opener':
-        specifier: ^2.7.3
-        version: 2.7.3
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -1660,9 +1657,6 @@ packages:
     resolution: {integrity: sha512-/cOeQgqq8PBDPODOjjT0YHs4qxKCHcQMWMiBm4rLM3JNr9mZE+PHNKOK4zAkhIUtYMNL/0fweW48VNvzD1AbqA==}
     engines: {node: '>= 10'}
     hasBin: true
-
-  '@tauri-apps/plugin-opener@2.7.3':
-    resolution: {integrity: sha512-Nm+v7vLBCDzYZxrmCJhpMgtPsPsKt5myMs7SMU/aBjPOmAFI1RrHfhMz7t5KlxjMOzRcelyNq1/j0pmC9SmBVA==}
 
   '@ts-morph/common@0.27.0':
     resolution: {integrity: sha512-Wf29UqxWDpc+i61k3oIOzcUfQt79PIT9y/MWfAGlrkjg6lBC1hwDECLXPVJAhWjiGbfBCxZd65F/LIZF3+jeJQ==}
@@ -4817,10 +4811,6 @@ snapshots:
       '@tauri-apps/cli-win32-arm64-msvc': 2.12.6
       '@tauri-apps/cli-win32-ia32-msvc': 2.12.6
       '@tauri-apps/cli-win32-x64-msvc': 2.12.6
-
-  '@tauri-apps/plugin-opener@2.7.3':
-    dependencies:
-      '@tauri-apps/api': 2.12.5
 
   '@ts-morph/common@0.27.0':
     dependencies:
