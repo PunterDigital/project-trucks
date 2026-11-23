@@ -236,12 +236,19 @@ updates, so check `pnpm audit` and the repo's Dependabot alerts for Tauri in the
   (with `Pager`). Tabs are radix via the `radix-ui` umbrella package (`src/components/ui/tabs.tsx`, written by hand, no
   new dependency). E2E: `e2e/truck-detail.spec.ts` seeds two trucks and checks the page against the Trucks list and the
   Dashboard; `data-testid="truck-jobs"` / `"truck-sessions"` / `"session-kind"`.
-- Export / backup (M3.3, `commands/export.rs`, Settings "Your data"): `export_jobs_csv(path)` writes RFC 4180 CSV
-  (`CSV_COLUMNS` order, CRLF, hand-rolled quoting, no csv crate) and returns the job count; `backup_database(path)` runs
-  `VACUUM INTO` on the live pool after deleting any existing target (VACUUM INTO refuses a non-empty file). The native
-  save dialog is `tauri-plugin-dialog` (crate + `@tauri-apps/plugin-dialog`, keep both on the same minor; capability
-  `dialog:allow-save`), wrapped as `api.pickSavePath`. Playwright can't drive the dialog, so `e2e/data.spec.ts` calls the
-  commands with paths in the test's `dataDir` and checks the files from Node (`node:sqlite` opens the backup).
+- Export / backup (M3.3, `commands/export.rs`, Settings "Your data"): `export_jobs_csv()` writes RFC 4180 CSV
+  (`CSV_COLUMNS` order, CRLF, hand-rolled quoting, no csv crate) and returns `{ path, count }`; `backup_database()` runs
+  `VACUUM INTO` a temp file beside the target, then renames it over (VACUUM INTO refuses a non-empty file). Since #5613
+  both open the native save dialog **from Rust** (`tauri-plugin-dialog`'s `save_file`, parented to the main window) and
+  take no path from the webview (`null` = cancelled); no `@tauri-apps/plugin-dialog` and no `dialog:*` permission. The
+  chosen file must end in `.csv` / `.db`, a backup only replaces an empty file or a SQLite database, and never the live
+  database. Test profiles have no dialog: `pick_save_path` reads the answer from `<data dir>/e2e-save-as` (first line; no
+  file = cancelled), which `e2e/data.spec.ts` writes from Node before clicking the buttons or invoking the commands, then
+  checks the files from Node (`node:sqlite` opens the backup).
+- Hub links (#5613): every URL the Hub hands back (approval page, profile, job pages) goes through `hub::check_hub_url`
+  before the opener sees it: https on the Hub base's own host and port (http too in a test profile), no user info. The
+  opener's Rust API isn't scope-limited and ends in ShellExecute, so a file path, UNC share or `search-ms:` URI from a
+  compromised Hub would otherwise run. `StubHub.verificationUriComplete` lets E2E serve a hostile link.
 - Loading / empty / error states (M3.4): no "Loading…" text anywhere. While a route's first request is in flight it shows
   a shape from `src/components/Skeletons.tsx` (`TableSkeleton`, `StatsPageSkeleton`, `JobDetailSkeleton`, …; each root has
   `data-testid="skeleton"` + `aria-busy`, so E2E waits for `getByTestId("skeleton")` to reach count 0). Every "nothing here"

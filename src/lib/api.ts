@@ -4,7 +4,6 @@
 // the Rust backend.
 
 import { invoke } from "@tauri-apps/api/core";
-import { save } from "@tauri-apps/plugin-dialog";
 
 import type {
   CurrentJob,
@@ -130,15 +129,11 @@ export const api = {
     invoke<TruckStats | null>("get_truck_stats", { id, query: query ?? null }),
 
   // -- Export / backup ----
-  /** Native "Save as" dialog; `null` when the user cancels. */
-  pickSavePath: (options: {
-    defaultPath: string;
-    filters: { name: string; extensions: string[] }[];
-  }) => save(options),
+  // The Rust side opens the "Save as" dialog itself and never takes a path from here (#5613).
+  /** Asks where, then writes every job as CSV; `null` when the user cancels. */
+  exportJobsCsv: () =>
+    invoke<{ path: string; count: number } | null>("export_jobs_csv"),
 
-  /** Writes every job to a CSV file at `path`; returns the number of jobs written. */
-  exportJobsCsv: (path: string) => invoke<number>("export_jobs_csv", { path }),
-
-  /** Snapshots the database to `path` (VACUUM INTO). */
-  backupDatabase: (path: string) => invoke<void>("backup_database", { path }),
+  /** Asks where, then snapshots the database (VACUUM INTO); the saved path, `null` if cancelled. */
+  backupDatabase: () => invoke<string | null>("backup_database"),
 };

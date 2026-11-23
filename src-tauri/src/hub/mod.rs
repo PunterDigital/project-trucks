@@ -109,6 +109,25 @@ pub fn resolve_url(test_profile: bool, env_url: Option<String>) -> Option<String
     }
 }
 
+/// Only Hub pages are opened: https on the Hub's own host and port (http too in a test profile,
+/// for the E2E stub), no user info. The opener hands a URL to ShellExecute, so without this a
+/// compromised Hub could answer with a program path, a UNC share or an `ms-*:` / `search-ms:`
+/// URI and "Link account" would open it (#5613).
+pub fn check_hub_url(url: &str, hub_base: &str, test_profile: bool) -> Result<(), String> {
+    let refuse = || Err("Refusing to open an address that isn't a Hub page.".to_string());
+    let (Ok(page), Ok(base)) = (tauri::Url::parse(url), tauri::Url::parse(hub_base)) else {
+        return refuse();
+    };
+    let scheme_ok = page.scheme() == "https" || (test_profile && page.scheme() == "http");
+    let same_site = page.host_str().is_some()
+        && page.host_str() == base.host_str()
+        && page.port_or_known_default() == base.port_or_known_default();
+    if !scheme_ok || !same_site || !page.username().is_empty() || page.password().is_some() {
+        return refuse();
+    }
+    Ok(())
+}
+
 /// "ProjectTrucks on DESKTOP-1234": what the driver sees on the approval page and in Linked apps.
 pub fn client_name() -> String {
     match std::env::var("COMPUTERNAME")
@@ -287,6 +306,11 @@ async fn start_link(
         .device_code(&client_name())
         .await
         .map_err(|e| e.to_string())?;
+    check_hub_url(
+        &code.verification_uri_complete,
+        client.base(),
+        hub.test_profile,
+    )?;
     let generation = hub.generation.fetch_add(1, Ordering::SeqCst) + 1;
     let expires_at = Utc::now() + chrono::Duration::seconds(code.expires_in as i64);
     *hub.linking.lock().expect("hub linking lock") = Some(Linking {
@@ -660,10 +684,8 @@ pub async fn hub_open(
         _ => None,
     }
     .ok_or("Nothing to open.")?;
-    let allowed = url.starts_with("https://") || (hub.test_profile && url.starts_with("http://"));
-    if !allowed {
-        return Err("Refusing to open a non-https address.".into());
-    }
+    let base = hub.client().ok_or("Nothing to open.")?.base();
+    check_hub_url(&url, base, hub.test_profile)?;
     if hub.test_profile {
         // Never pop a browser on the machine running the tests.
         return Ok(());
@@ -748,6 +770,43 @@ mod tests {
             resolve_url(true, Some(" http://127.0.0.1:9999 ".into())).as_deref(),
             Some("http://127.0.0.1:9999")
         );
+    }
+
+    #[test]
+    fn only_hub_pages_are_opened() {
+        let prod = DEFAULT_HUB_URL;
+        for ok in [
+            "https://project-trucks.shaypunter.co.uk/link?code=BCDF-2345",
+            "https://project-trucks.shaypunter.co.uk/drivers/erin",
+            "https://PROJECT-TRUCKS.shaypunter.co.uk:443/jobs/1",
+        ] {
+            assert_eq!(check_hub_url(ok, prod, false), Ok(()), "{ok}");
+        }
+        for bad in [
+            "http://project-trucks.shaypunter.co.uk/link",
+            "https://evil.example/link",
+            "https://project-trucks.shaypunter.co.uk.evil.example/link",
+            "https://project-trucks.shaypunter.co.uk:8443/link",
+            "https://user:pw@project-trucks.shaypunter.co.uk/link",
+            "https://project-trucks.shaypunter.co.uk@evil.example/link",
+            "file:///C:/Windows/System32/calc.exe",
+            "C:\\Windows\\System32\\calc.exe",
+            "\\\\evil.example\\share\\run.exe",
+            "search-ms:query=x&crumb=location:\\\\evil.example\\share",
+            "ms-settings:privacy",
+            "javascript:alert(1)",
+            "",
+        ] {
+            assert!(check_hub_url(bad, prod, false).is_err(), "{bad}");
+        }
+        let stub = "http://127.0.0.1:9999";
+        assert_eq!(
+            check_hub_url("http://127.0.0.1:9999/link?code=X", stub, true),
+            Ok(())
+        );
+        assert!(check_hub_url("http://127.0.0.1:9999/link", stub, false).is_err());
+        assert!(check_hub_url("http://127.0.0.1:9998/link", stub, true).is_err());
+        assert!(check_hub_url("http://localhost:9999/link", stub, true).is_err());
     }
 
     #[test]
