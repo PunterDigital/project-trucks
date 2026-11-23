@@ -105,8 +105,6 @@ export function Settings() {
     if (value !== (settings.ets2InstallPath ?? "")) await save({ ets2InstallPath: value });
   };
 
-  const today = new Date().toISOString().slice(0, 10);
-
   const checkNow = async () => {
     setChecking(true);
     try {
@@ -128,12 +126,9 @@ export function Settings() {
   const exportCsv = async () => {
     setBusy("export");
     try {
-      const path = await api.pickSavePath({
-        defaultPath: `projecttrucks-jobs-${today}.csv`,
-        filters: [{ name: "CSV", extensions: ["csv"] }],
-      });
-      if (!path) return;
-      const count = await api.exportJobsCsv(path);
+      const done = await api.exportJobsCsv();
+      if (!done) return;
+      const { count, path } = done;
       toast.success(`Exported ${count} ${count === 1 ? "job" : "jobs"} to ${path}`);
     } catch (e) {
       toast.error(`Export failed: ${String(e)}`);
@@ -145,12 +140,8 @@ export function Settings() {
   const backup = async () => {
     setBusy("backup");
     try {
-      const path = await api.pickSavePath({
-        defaultPath: `projecttrucks-backup-${today}.db`,
-        filters: [{ name: "SQLite database", extensions: ["db"] }],
-      });
+      const path = await api.backupDatabase();
       if (!path) return;
-      await api.backupDatabase(path);
       toast.success(`Backup saved to ${path}`);
     } catch (e) {
       toast.error(`Backup failed: ${String(e)}`);

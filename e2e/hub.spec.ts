@@ -165,6 +165,37 @@ test("cancelling a link stops polling", async ({ page, hub }) => {
   await expect(section.getByTestId("hub-linked")).toHaveCount(0);
 });
 
+test("an approval link that isn't a Hub page is refused (#5613)", async ({ page, hub }) => {
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  const section = page.getByTestId("hub-settings");
+  hub.verificationUriComplete = "file:///C:/Windows/System32/calc.exe";
+  await section.getByRole("button", { name: "Link account" }).click();
+  await expect(page.getByText("Refusing to open an address that isn't a Hub page.")).toBeVisible();
+  await expect(section.getByTestId("hub-code")).toHaveCount(0);
+  await expect(section.getByRole("button", { name: "Link account" })).toBeEnabled();
+  for (const evil of [
+    "search-ms:query=x&crumb=location:\\\\evil.example\\share",
+    "\\\\evil.example\\share\\run.exe",
+    `${hub.url.replace("127.0.0.1", "localhost")}/link?code=BCDF-2345`,
+  ]) {
+    hub.verificationUriComplete = evil;
+    const error = await page.evaluate(() =>
+      (
+        window as unknown as { __TAURI_INTERNALS__: { invoke: Invoke } }
+      ).__TAURI_INTERNALS__.invoke("hub_link_start").then(
+        () => null,
+        (e: unknown) => String(e),
+      ),
+    );
+    expect(error, evil).toContain("isn't a Hub page");
+  }
+  await expect(section.getByTestId("hub-code")).toHaveCount(0);
+  // The real link still works afterwards.
+  hub.verificationUriComplete = null;
+  await section.getByRole("button", { name: "Link account" }).click();
+  await expect(section.getByTestId("hub-code")).toHaveText("BCDF-2345");
+});
+
 // Live status (#4635): a replayed delivery, Calais → Lyon. The Hub sees the job in progress and
 // is told when the drive ends (auto-capture switched off).
 function snapshot(odometerKm: number, routeKm: number | null) {

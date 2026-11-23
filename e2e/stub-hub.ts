@@ -21,6 +21,8 @@ export class StubHub {
   hidden = new Set<string>();
   company: { name: string; slug: string; tag: string } | null = null;
   statuses: (Record<string, unknown> | "deleted")[] = [];
+  /** Overrides the approval link `/device/code` answers with (a compromised Hub, #5613). */
+  verificationUriComplete: string | null = null;
   private server: Server | null = null;
 
   get url() {
@@ -43,7 +45,8 @@ export class StubHub {
           device_code: "dev-code",
           user_code: "BCDF-2345",
           verification_uri: `${this.url}/link`,
-          verification_uri_complete: `${this.url}/link?code=BCDF-2345`,
+          verification_uri_complete:
+            this.verificationUriComplete ?? `${this.url}/link?code=BCDF-2345`,
           expires_in: 900,
           interval: 1,
         });

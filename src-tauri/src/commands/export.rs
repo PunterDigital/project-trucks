@@ -3,16 +3,21 @@
 //! `export_jobs_csv` writes every job to a CSV file (RFC 4180: header row, CRLF,
 //! fields quoted when they hold a comma, quote or line break). `backup_database`
 //! snapshots the live database with `VACUUM INTO`, which produces a clean,
-//! consistent copy without closing the pool. Both take the path the user picked
-//! in the native save dialog; the frontend owns the dialog, these commands only
-//! write.
+//! consistent copy without closing the pool.
+//!
+//! Both commands open the native save dialog themselves and never take a path from the
+//! webview (#5613): a path argument would let any script in the webview write or delete files
+//! anywhere. Test profiles have no dialog; [`pick_save_path`] reads the answer from
+//! `<data dir>/e2e-save-as` instead (written by the E2E spec from Node).
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use serde::Serialize;
 use sqlx::SqlitePool;
-use tauri::State;
+use tauri::{AppHandle, Manager, Runtime, State};
+use tauri_plugin_dialog::DialogExt;
 
 use crate::db::models::Job;
 use crate::db::AppState;
@@ -144,36 +149,164 @@ pub async fn write_jobs_csv(pool: &SqlitePool, path: &Path) -> Result<usize> {
     Ok(count)
 }
 
-/// Snapshot the database to `path` with `VACUUM INTO`. An existing file is replaced (the save
-/// dialog has already asked about overwriting); `VACUUM INTO` itself refuses a non-empty target.
+const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+
+/// Snapshot the database to `path` with `VACUUM INTO`. `VACUUM INTO` refuses a non-empty target,
+/// so the snapshot goes to a temporary file next to it and is then moved over the target. An
+/// existing target is replaced only when it is empty or a SQLite database (an older backup):
+/// anything else is refused, whatever the dialog said.
 pub async fn backup_to(pool: &SqlitePool, path: &Path) -> Result<()> {
-    if path.exists() {
-        std::fs::remove_file(path)
-            .with_context(|| format!("replacing the old backup {}", path.display()))?;
-    }
-    let target = path.to_string_lossy().into_owned();
-    sqlx::query("VACUUM INTO ?")
-        .bind(target)
-        .execute(pool)
+    let (_, _, live): (i64, String, String) = sqlx::query_as("PRAGMA database_list")
+        .fetch_one(pool)
         .await
-        .with_context(|| format!("backing up to {}", path.display()))?;
+        .context("finding the database file")?;
+    if !live.is_empty() && same_file(Path::new(&live), path) {
+        bail!("That is the app's own database. Choose another file name.");
+    }
+    if path.exists() && !is_replaceable_backup(path)? {
+        bail!(
+            "{} exists and isn't a database. Choose another file name.",
+            path.display()
+        );
+    }
+    let name = path
+        .file_name()
+        .with_context(|| format!("{} has no file name", path.display()))?;
+    let mut temp_name = name.to_os_string();
+    temp_name.push(format!(".{}.tmp", uuid::Uuid::new_v4().simple()));
+    let temp = path.with_file_name(temp_name);
+    let target = temp.to_string_lossy().into_owned();
+    let result = async {
+        sqlx::query("VACUUM INTO ?")
+            .bind(target)
+            .execute(pool)
+            .await
+            .with_context(|| format!("backing up to {}", path.display()))?;
+        std::fs::rename(&temp, path).with_context(|| format!("replacing {}", path.display()))
+    }
+    .await;
+    if result.is_err() && temp.exists() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn is_replaceable_backup(path: &Path) -> Result<bool> {
+    use std::io::Read as _;
+    let mut header = Vec::with_capacity(SQLITE_HEADER.len());
+    std::fs::File::open(path)
+        .with_context(|| format!("reading {}", path.display()))?
+        .take(SQLITE_HEADER.len() as u64)
+        .read_to_end(&mut header)
+        .with_context(|| format!("reading {}", path.display()))?;
+    Ok(header.is_empty() || header == SQLITE_HEADER)
+}
+
+/// Refuses a chosen file whose extension isn't `ext` (any case).
+pub fn require_extension(path: &Path, ext: &str) -> Result<()> {
+    let ok = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(ext));
+    if !ok {
+        bail!("Choose a file name ending in .{ext}.");
+    }
     Ok(())
+}
+
+/// Where to save, chosen by the user in the native save dialog; `None` when they cancel.
+/// In a test profile there is no dialog: the answer is the first line of
+/// `<data dir>/e2e-save-as`, and a missing file means "cancelled".
+async fn pick_save_path<R: Runtime>(
+    app: &AppHandle<R>,
+    file_name: String,
+    filter: (&str, &str),
+) -> Result<Option<PathBuf>> {
+    if let Some(dir) = crate::db::data_dir_override() {
+        return Ok(std::fs::read_to_string(dir.join("e2e-save-as"))
+            .ok()
+            .and_then(|s| s.lines().next().map(|l| PathBuf::from(l.trim())))
+            .filter(|p| !p.as_os_str().is_empty()));
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_file_name(file_name)
+        .add_filter(filter.0, &[filter.1]);
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&window);
+    }
+    dialog.save_file(move |chosen| {
+        let _ = tx.send(chosen);
+    });
+    match rx.await.context("the save dialog closed unexpectedly")? {
+        None => Ok(None),
+        Some(chosen) => Ok(Some(
+            chosen
+                .into_path()
+                .context("the save dialog returned no file path")?,
+        )),
+    }
+}
+
+fn today() -> String {
+    chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
 // --- Tauri command wrappers ---
 
-#[tauri::command]
-pub async fn export_jobs_csv(state: State<'_, AppState>, path: String) -> Result<usize, String> {
-    write_jobs_csv(&state.pool, Path::new(&path))
-        .await
-        .map_err(|e| format!("{e:#}"))
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Exported {
+    pub path: String,
+    pub count: usize,
 }
 
+/// "Export jobs to CSV": asks where, then writes. `None` when the dialog was cancelled.
 #[tauri::command]
-pub async fn backup_database(state: State<'_, AppState>, path: String) -> Result<(), String> {
-    backup_to(&state.pool, Path::new(&path))
-        .await
-        .map_err(|e| format!("{e:#}"))
+pub async fn export_jobs_csv(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<Exported>, String> {
+    let run = async {
+        let name = format!("projecttrucks-jobs-{}.csv", today());
+        let Some(path) = pick_save_path(&app, name, ("CSV", "csv")).await? else {
+            return Ok(None);
+        };
+        require_extension(&path, "csv")?;
+        let count = write_jobs_csv(&state.pool, &path).await?;
+        Ok(Some(Exported {
+            path: path.display().to_string(),
+            count,
+        }))
+    };
+    run.await.map_err(|e: anyhow::Error| format!("{e:#}"))
+}
+
+/// "Back up database": asks where, then snapshots. The saved path, or `None` when cancelled.
+#[tauri::command]
+pub async fn backup_database(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    let run = async {
+        let name = format!("projecttrucks-backup-{}.db", today());
+        let Some(path) = pick_save_path(&app, name, ("SQLite database", "db")).await? else {
+            return Ok(None);
+        };
+        require_extension(&path, "db")?;
+        backup_to(&state.pool, &path).await?;
+        Ok(Some(path.display().to_string()))
+    };
+    run.await.map_err(|e: anyhow::Error| format!("{e:#}"))
 }
 
 #[cfg(test)]
@@ -236,6 +369,22 @@ mod tests {
     }
 
     #[test]
+    fn the_chosen_file_needs_the_right_extension() {
+        assert!(require_extension(Path::new("C:/x/jobs.csv"), "csv").is_ok());
+        assert!(require_extension(Path::new("C:/x/JOBS.CSV"), "csv").is_ok());
+        assert!(require_extension(Path::new("C:/x/backup.db"), "db").is_ok());
+        for bad in [
+            "C:/x/jobs",
+            "C:/x/run.bat",
+            "C:/x/jobs.csv.bat",
+            "C:/x/backup.db.lnk",
+        ] {
+            assert!(require_extension(Path::new(bad), "csv").is_err(), "{bad}");
+        }
+        assert!(require_extension(Path::new("C:/x/jobs.csv"), "db").is_err());
+    }
+
+    #[test]
     fn fields_are_quoted_only_when_needed() {
         assert_eq!(csv_field("plain"), "plain");
         assert_eq!(csv_field(""), "");
@@ -291,11 +440,26 @@ mod tests {
             .unwrap();
 
         let backup = dir.join("backup.db");
-        // A stale file at the target is replaced.
+        // A file that isn't a database is never replaced (#5613)...
         std::fs::write(&backup, b"not a database").unwrap();
+        let refused = backup_to(&pool, &backup).await.unwrap_err();
+        assert!(format!("{refused:#}").contains("isn't a database"));
+        assert_eq!(std::fs::read(&backup).unwrap(), b"not a database");
+        // ...an empty one is, and so is an older backup.
+        std::fs::write(&backup, b"").unwrap();
+        backup_to(&pool, &backup).await.unwrap();
         backup_to(&pool, &backup).await.unwrap();
         let header = std::fs::read(&backup).unwrap();
         assert!(header.starts_with(b"SQLite format 3\0"));
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "no temporary files left behind");
+        // Never over the live database itself.
+        let own = backup_to(&pool, &data).await.unwrap_err();
+        assert!(format!("{own:#}").contains("own database"));
 
         // Keep writing to the live database after the snapshot.
         insert_job(&pool, job("Oslo", None)).await.unwrap();
