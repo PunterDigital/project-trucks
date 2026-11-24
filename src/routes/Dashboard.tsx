@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Gauge } from "lucide-react";
 
@@ -78,11 +78,11 @@ function pctDelta(current: PeriodStats, previous: PeriodStats): StatDelta | unde
 export function Dashboard() {
   const navigate = useNavigate();
   const telemetry = useTelemetryStatus();
-  const currentJob = useCurrentJob();
   const captured = useCaptureRefresh();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const openJob = useCallback((id: string) => navigate(`/jobs/${id}`), [navigate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,7 +110,7 @@ export function Dashboard() {
         </p>
       </div>
 
-      <JobInProgress job={currentJob} />
+      <LiveJobInProgress />
 
       {error ? (
         <LoadError
@@ -123,10 +123,20 @@ export function Dashboard() {
       ) : stats.lifetime.totalKm === 0 && stats.recentJobs.length === 0 ? (
         <EmptyDashboard />
       ) : (
-        <DashboardBody stats={stats} onOpenJob={(id) => navigate(`/jobs/${id}`)} />
+        <DashboardBody stats={stats} onOpenJob={openJob} />
       )}
     </div>
   );
+}
+
+/**
+ * The job card with its own `telemetry:job` subscription. The event comes every second while
+ * driving (the driven km and progress change each tick); listening here keeps those ticks from
+ * re-rendering the whole page and its charts (#5670).
+ */
+function LiveJobInProgress() {
+  const job = useCurrentJob();
+  return <JobInProgress job={job} />;
 }
 
 function EmptyDashboard() {
@@ -146,7 +156,7 @@ function EmptyDashboard() {
   );
 }
 
-function DashboardBody({
+const DashboardBody = memo(function DashboardBody({
   stats,
   onOpenJob,
 }: {
@@ -297,4 +307,4 @@ function DashboardBody({
       </section>
     </>
   );
-}
+});

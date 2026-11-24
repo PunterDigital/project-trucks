@@ -75,6 +75,9 @@ cancel, capture stays off/waiting, a dismissed prompt stays away); everything el
 - `release.yml` on `v*` tags: creates the release with generated notes, `tauri-action` (v1) uploads the
   Windows `_x64-setup.exe` / `.msi`, then a job verifies both exist. tauri-action v1 rewrites the name and body
   of an existing release from its inputs, so the first job passes the generated notes on as `releaseBody`.
+- Release profile (#5670): `codegen-units = 1` + `strip = true`, no LTO and no `panic = "abort"`. Measured: LTO
+  (thin, fat, fat + 1 cgu) gave a bigger or barely smaller installer and fat LTO cost 6–8 min per release build;
+  numbers in the Cargo.toml comment and the #5670 PR. The lib is `rlib` only (Tauri's mobile `staticlib`/`cdylib` dropped).
 - Version lives in `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` (+ `Cargo.lock`):
   bump all of them in the release commit.
 
