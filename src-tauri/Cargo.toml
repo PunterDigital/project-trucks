@@ -12,7 +12,9 @@ edition = "2021"
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "projecttrucks_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Desktop only: no `staticlib` / `cdylib` (Tauri's template adds them for Android/iOS builds).
+# They were linked on every build and never used (#5670).
+crate-type = ["rlib"]
 
 [features]
 # The E2E test hooks (CDP port, telemetry replay, fake update feed and Hub, dry-run installs,
@@ -20,6 +22,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # feature, which CI's E2E build and `pnpm tauri build --no-bundle --features e2e` turn on.
 # Released installers (release.yml) are built without it (#5614).
 e2e = []
+
+# Smaller installers (every one-click update downloads one), #5670. Measured on v0.12.0's code:
+# codegen-units = 1 + strip took the exe from 19.9 to 17.2 MB and the NSIS installer from 5.01
+# to 4.66 MB. LTO did worse here: fat LTO + 1 codegen unit gave 17.6 / 4.82 MB and made every
+# release build several minutes slower, thin LTO made both bigger than no profile at all.
+# No `panic = "abort"`: a panic in one tokio task (telemetry, Hub sync) must not take the app down.
+[profile.release]
+codegen-units = 1
+strip = true
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

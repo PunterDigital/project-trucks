@@ -835,4 +835,43 @@ mod tests {
         assert_eq!(stats.lifetime.costs, 19 + 81 + 1_000 + 700);
         assert_eq!(stats.this_month.costs, 19 + 81 + 700);
     }
+
+    /// The truck-scoped filter (`push_truck`) is answered from an index on each table it is
+    /// used on (migration 0008, #5670), not a full scan.
+    #[tokio::test]
+    async fn truck_scoped_queries_use_an_index() {
+        let pool = test_pool().await;
+        let truck = TruckScope {
+            make: "Scania",
+            model: "R 730",
+        };
+        for (table, index) in [
+            ("driving_sessions", "idx_sessions_truck"),
+            ("jobs", "idx_jobs_truck"),
+            ("expenses", "idx_expenses_truck"),
+        ] {
+            let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
+                "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM {table} WHERE 1=1"
+            ));
+            push_truck(&mut qb, Some(truck));
+            let plan: Vec<(i64, i64, i64, String)> =
+                qb.build_query_as().fetch_all(&pool).await.unwrap();
+            let detail: Vec<&str> = plan.iter().map(|row| row.3.as_str()).collect();
+            assert!(
+                detail.iter().any(|d| d.contains(index)),
+                "{table}: {detail:?}"
+            );
+        }
+
+        let plan: Vec<(i64, i64, i64, String)> =
+            sqlx::query_as("EXPLAIN QUERY PLAN SELECT id FROM jobs WHERE session_id = ?")
+                .bind("s1")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(
+            plan.iter().any(|row| row.3.contains("idx_jobs_session_id")),
+            "{plan:?}"
+        );
+    }
 }
