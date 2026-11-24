@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { HubSettings } from "@/components/HubSettings";
@@ -52,9 +52,19 @@ export function Settings() {
 
   const folder = settings?.ets2InstallPath ?? null;
   const [check, setCheck] = useState<PluginCheck | null>(null);
+  // Bumped after an install so the status is read again for the folder saved by then.
+  const [recheck, setRecheck] = useState(0);
+  // The saved folder as of the last commit. An install can be clicked in a render whose folder
+  // is already out of date (a save still in flight), so its result is tagged with this, not with
+  // the click's closure: otherwise the badge waits on "Checking…" for a folder that's gone.
+  const folderRef = useRef(folder);
   const [installing, setInstalling] = useState(false);
   // Which data action is running, so its button is disabled while the file is written.
   const [busy, setBusy] = useState<"export" | "backup" | null>(null);
+
+  useEffect(() => {
+    folderRef.current = folder;
+  }, [folder]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,7 +75,7 @@ export function Settings() {
     return () => {
       cancelled = true;
     };
-  }, [folder]);
+  }, [folder, recheck]);
 
   if (!settings) return <SettingsSkeleton />;
 
@@ -80,10 +90,12 @@ export function Settings() {
     setInstalling(true);
     try {
       const status = await api.installTelemetryPlugin();
-      setCheck({ folder, status, error: null });
+      setCheck({ folder: folderRef.current, status, error: null });
+      // A status read that started before the install finished would show the old state.
+      setRecheck((n) => n + 1);
       toast.success("Telemetry plugin installed. Restart ETS2 if it is running.");
     } catch (e) {
-      setCheck({ folder, status: null, error: String(e) });
+      setCheck({ folder: folderRef.current, status: null, error: String(e) });
       toast.error(String(e));
     } finally {
       setInstalling(false);
