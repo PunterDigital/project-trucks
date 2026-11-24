@@ -6,7 +6,16 @@ installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
 ## v0.13.0 — 2026-11-24
 
-Security hardening from an audit. Nothing changes in how you use the app, apart from where updates wait to install.
+Security hardening from an audit, plus a smaller installer and a lighter Dashboard while you drive. Nothing changes in
+how you use the app, apart from where updates wait to install.
+
+### Performance
+- **Smaller installer.** The app is built more compactly: the installer every one-click update downloads is about 7%
+  smaller and the app itself about 13% smaller. ([#102](https://github.com/PunterDigital/project-trucks/pull/102))
+- **Lighter Dashboard while driving.** The job-in-progress card updates every second on its own, without redrawing the
+  rest of the Dashboard and its charts each time. ([#102](https://github.com/PunterDigital/project-trucks/pull/102))
+- **Faster truck pages.** New database indexes for the truck page and truck filters.
+  ([#102](https://github.com/PunterDigital/project-trucks/pull/102))
 
 ### Fixes
 - **Hub links only open Hub pages.** "Link account" and the other Hub buttons only open an https page on the Hub's own
@@ -25,6 +34,8 @@ Security hardening from an audit. Nothing changes in how you use the app, apart 
   fake update feed) are no longer in the released app. ([#101](https://github.com/PunterDigital/project-trucks/pull/101))
 - **Safer CSV export.** Text cells that start with `=`, `+`, `-` or `@` get a leading `'`, so a spreadsheet can't run
   them as formulas. ([#101](https://github.com/PunterDigital/project-trucks/pull/101))
+- **Plugin status after an update.** Settings → Telemetry plugin no longer gets stuck on "Checking…" when you click
+  Install or Update right after changing the ETS2 folder. ([#102](https://github.com/PunterDigital/project-trucks/pull/102))
 
 ## v0.12.0 — 2026-11-23
 
