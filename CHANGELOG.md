@@ -4,6 +4,39 @@ All notable changes to ProjectTrucks. Versions are semver tags; each one has a
 [GitHub Release](https://github.com/PunterDigital/project-trucks/releases) with the
 installers attached. Pre-1.0: features bump the minor version, fixes the patch.
 
+## v0.13.0 — 2026-11-24
+
+Security hardening from an audit, plus a smaller installer and a lighter Dashboard while you drive. Nothing changes in
+how you use the app, apart from where updates wait to install.
+
+### Performance
+- **Smaller installer.** The app is built more compactly: the installer every one-click update downloads is about 7%
+  smaller and the app itself about 13% smaller. ([#102](https://github.com/PunterDigital/project-trucks/pull/102))
+- **Lighter Dashboard while driving.** The job-in-progress card updates every second on its own, without redrawing the
+  rest of the Dashboard and its charts each time. ([#102](https://github.com/PunterDigital/project-trucks/pull/102))
+- **Faster truck pages.** New database indexes for the truck page and truck filters.
+  ([#102](https://github.com/PunterDigital/project-trucks/pull/102))
+
+### Fixes
+- **Hub links only open Hub pages.** "Link account" and the other Hub buttons only open an https page on the Hub's own
+  address. Anything else the Hub might send back is refused with an error instead of being opened.
+  ([#100](https://github.com/PunterDigital/project-trucks/pull/100))
+- **Export and backup choose the file themselves.** The save dialog for **Export jobs (CSV)** and **Back up database**
+  now opens from the app's core, which only writes `.csv` and `.db` files. A backup only replaces an older backup or an
+  empty file (never the app's own database), and a failed backup no longer deletes the previous one.
+  ([#100](https://github.com/PunterDigital/project-trucks/pull/100))
+- **Stricter updates.** An update is only downloaded from this project's GitHub releases and only installed when GitHub
+  lists its checksum; the file is checked again right before it runs. Downloaded updates now wait in
+  `%LOCALAPPDATA%\co.shaypunter.projecttrucks\update` instead of the temp folder, and an update waiting for the next
+  launch only installs if the release still lists that same file.
+  ([#101](https://github.com/PunterDigital/project-trucks/pull/101))
+- **Installers have no test hooks.** The settings used by the automated tests (a debugging port, replayed drives, a
+  fake update feed) are no longer in the released app. ([#101](https://github.com/PunterDigital/project-trucks/pull/101))
+- **Safer CSV export.** Text cells that start with `=`, `+`, `-` or `@` get a leading `'`, so a spreadsheet can't run
+  them as formulas. ([#101](https://github.com/PunterDigital/project-trucks/pull/101))
+- **Plugin status after an update.** Settings → Telemetry plugin no longer gets stuck on "Checking…" when you click
+  Install or Update right after changing the ETS2 folder. ([#102](https://github.com/PunterDigital/project-trucks/pull/102))
+
 ## v0.12.0 — 2026-11-23
 
 ### Features
